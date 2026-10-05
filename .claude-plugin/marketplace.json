@@ -1,0 +1,27 @@
+{
+  "name": "past",
+  "description": "Connectors that give Claude Code a memory, built on the past.dev Memory API.",
+  "owner": {
+    "name": "past.dev",
+    "url": "https://past.dev"
+  },
+  "plugins": [
+    {
+      "name": "past",
+      "source": "./plugins/past",
+      "description": "Your Claude Code sessions become memory, and every session starts briefed.",
+      "version": "0.1.0",
+      "author": {
+        "name": "past.dev",
+        "url": "https://past.dev"
+      },
+      "keywords": [
+        "memory",
+        "recall",
+        "context",
+        "past",
+        "past.dev"
+      ]
+    }
+  ]
+}
