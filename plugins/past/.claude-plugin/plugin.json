@@ -1,0 +1,41 @@
+{
+  "name": "past",
+  "displayName": "past.dev",
+  "version": "0.1.0",
+  "description": "Your Claude Code sessions become memory, and every session starts briefed.",
+  "author": { "name": "past.dev", "url": "https://past.dev" },
+  "homepage": "https://github.com/pastdotdev/claude-code-plugin",
+  "repository": "https://github.com/pastdotdev/claude-code-plugin",
+  "license": "MIT",
+  "keywords": ["memory", "recall", "context"],
+  "hooks": "./hooks/hooks.json",
+  "commands": ["./commands/connect.md", "./commands/status.md", "./commands/cut.md", "./commands/ingest.md", "./commands/backfill.md"],
+  "skills": "./skills/",
+  "userConfig": {
+    "api_key": {
+      "type": "string",
+      "title": "past.dev project API key",
+      "description": "Starts with past_sk_. Create one in the past.dev console under Build > API keys.",
+      "sensitive": true,
+      "required": false
+    },
+    "identity": {
+      "type": "string",
+      "title": "Your identity",
+      "description": "The email or id every memory is attributed to. Recall stays off without it.",
+      "required": false
+    },
+    "api_url": {
+      "type": "string",
+      "title": "API URL",
+      "description": "Only for a self-hosted or staging deployment. Leave empty for https://api.past.dev.",
+      "required": false
+    },
+    "audience": {
+      "type": "string",
+      "title": "Audience",
+      "description": "Who in the project sees your sessions: an audience slug from the console. Leave empty for the whole project.",
+      "required": false
+    }
+  }
+}

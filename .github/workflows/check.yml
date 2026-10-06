@@ -1,0 +1,42 @@
+name: check
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  script:
+    name: script on Node ${{ matrix.node }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [14, 16, 22]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      # Node 16 is the floor. On an older Node the hooks only have to stay silent, so 14 parses it.
+      - name: Parses
+        run: node --check plugins/past/bin/past-hook.mjs
+      - name: Runs with nothing configured
+        if: matrix.node != 14
+        run: node plugins/past/bin/past-hook.mjs status
+        env:
+          HOME: ${{ runner.temp }}/home
+
+  manifests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Claude Code validates the marketplace
+        run: npx --yes @anthropic-ai/claude-code plugin validate .
+      - name: Claude Code validates the plugin
+        run: npx --yes @anthropic-ai/claude-code plugin validate plugins/past
