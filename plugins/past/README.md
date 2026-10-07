@@ -15,6 +15,11 @@ On Claude Code older than v2.1.275, `--marketplace` does not exist, so it is two
 /plugin install past@past
 ```
 
+In the Claude desktop app, or on claude.ai: open **Customize › Plugins**, select **Add › Add
+marketplace** and enter `pastdotdev/claude-code-plugin`, then open **past.dev** and select **Add**.
+The plugin is saved to your account and loads in Claude Code, in the app's Code tab and in the
+terminal, from the next session on; `/reload-plugins` loads it into a session already open.
+
 Then connect it, wherever Claude Code runs:
 
 ```
