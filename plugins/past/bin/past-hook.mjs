@@ -27,7 +27,7 @@ const DEFAULT_SITTING_MINUTES = 30;
 const MIN_SITTING_MINUTES = 5;
 const DEFAULT_API_URL = 'https://api.past.dev';
 const MARKER = '=== past · recalled from memory ===';
-const VERSION = '0.1.0';
+const VERSION = '0.1.1';
 
 // ---------------------------------------------------------------------------------- Claude Code
 
@@ -604,6 +604,14 @@ function readStdin() {
   });
 }
 
+// Another agent can load this plugin's hooks and run them on events of its own, about a
+// conversation that is not Claude Code's. Claude Code names the event in every hook's input, so a
+// hook answers the one event it was written for and stays silent for any other: no recall is spent
+// on that agent's prompts, and none of its conversations is booked as a session.
+function ownEvent(input, event) {
+  return input.hook_event_name === event;
+}
+
 function emit(event, context) {
   if (!context) return;
   process.stdout.write(JSON.stringify({
@@ -647,6 +655,7 @@ function tidyPending(state, config, currentId) {
 
 async function modeBrief(config) {
   const input = await readStdin();
+  if (!ownEvent(input, 'SessionStart')) return;
   const state = loadState();
   const cwd = input.cwd || process.cwd();
   if (denied(config, cwd)) return;
@@ -701,6 +710,7 @@ function recentPrompts(transcriptPath) {
  */
 async function modePreCompact(config) {
   const input = await readStdin();
+  if (!ownEvent(input, 'PreCompact')) return;
   const cwd = input.cwd || '';
   if (denied(config, cwd)) return;
   const transcript = input.transcript_path;
@@ -718,6 +728,7 @@ async function modePreCompact(config) {
 
 async function modePrompt(config) {
   const input = await readStdin();
+  if (!ownEvent(input, 'UserPromptSubmit')) return;
   if (denied(config, input.cwd || '')) return;
   const prompt = input.prompt || '';
   // A short prompt ("yes", "go on") carries no query. Spending a recall on it wastes the budget
@@ -795,6 +806,7 @@ function detach(...args) {
 
 async function modeStop(config) {
   const input = await readStdin();
+  if (!ownEvent(input, 'Stop')) return;
   const cwd = input.cwd || '';
   if (denied(config, cwd) || !config.ingest || !config.apiKey) return;
   const transcript = input.transcript_path;
@@ -863,6 +875,7 @@ async function modeIdle(config, argv) {
 
 async function modeEnd(config) {
   const input = await readStdin();
+  if (!ownEvent(input, 'SessionEnd')) return;
   const cwd = input.cwd || '';
   if (denied(config, cwd)) return;
   const transcript = input.transcript_path;

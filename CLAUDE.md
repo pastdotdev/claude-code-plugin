@@ -156,6 +156,12 @@ plugins/past/
     recall block's header, `=== past · recalled from memory ===`: the script drops a block by that
     exact text from the sessions it sends, so a changed header would change how old sessions render
     and send them all again (rule 10).
+14. **A hook answers Claude Code's own events alone.** Another agent can load this plugin's hooks
+    and run them on events of its own, about a conversation that is not Claude Code's. Claude Code
+    names the event in every hook's input (`hook_event_name`), so each hook mode checks that it is
+    the one it was written for (`SessionStart`, `UserPromptSubmit`, `Stop`, `PreCompact`,
+    `SessionEnd`) and otherwise stays silent: no recall is spent on that agent's prompts, and none
+    of its conversations is booked as a session. What Claude Code's own sessions send is unchanged.
 
 ## Beside other past.dev plugins
 
@@ -188,8 +194,8 @@ MCP stays the right surface for Claude web and desktop, and for conversational l
   with `GET /api/v1/audiences/{slug}` (404 when unknown); a later `audience-unknown` refusal is
   kept in `state.lastError` for `/past:status`, like every failed send.
 - `UserPromptSubmit` gives the prompt as `prompt` on stdin.
-- Claude Code gives a hook `session_id`, `transcript_path` and `cwd`, and takes
-  `hookSpecificOutput.additionalContext` at session start and on a prompt.
+- Claude Code gives a hook `session_id`, `transcript_path`, `cwd` and `hook_event_name`, and
+  takes `hookSpecificOutput.additionalContext` at session start and on a prompt.
 - A project API key (`past_sk_…`) names its own project. The plugin never sends a project id.
 
 If any of these contracts changes, this file changes with it.
@@ -214,7 +220,7 @@ For the hooks and the waiter, point a throwaway home at a local stand-in for the
 touches your real `~/.past` or a real project: `HOME=/tmp/past-test` with a `config.json` whose
 `apiUrl` is `http://127.0.0.1:<port>`, a few lines of Node answering `POST /api/v1/ingest/batch` and
 logging what arrives, and the mode under test fed its stdin JSON by hand (`echo
-'{"session_id":…,"transcript_path":…,"cwd":…}' | node plugins/past/bin/past-hook.mjs stop`). A
+'{"hook_event_name":"Stop","session_id":…,"transcript_path":…,"cwd":…}' | node plugins/past/bin/past-hook.mjs stop`). A
 small `idleMinutes` in that config makes the idle timer testable in seconds.
 
 **A change to the script is checked against what it sent before.** Run the old script and the new
