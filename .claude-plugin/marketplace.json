@@ -10,7 +10,7 @@
       "name": "past",
       "source": "./plugins/past",
       "description": "Your Claude Code sessions become memory, and every session starts briefed.",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "author": {
         "name": "past.dev",
         "url": "https://past.dev"

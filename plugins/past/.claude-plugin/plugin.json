@@ -1,7 +1,7 @@
 {
   "name": "past",
   "displayName": "past.dev",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Your Claude Code sessions become memory, and every session starts briefed.",
   "author": { "name": "past.dev", "url": "https://past.dev" },
   "homepage": "https://github.com/pastdotdev/claude-code-plugin",
