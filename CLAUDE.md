@@ -10,13 +10,14 @@ whoever changes it.
 
 ```
 Claude Code
-  hooks/hooks.json
+  hooks/hooks.json, .mcp.json
   commands/*.md, skills/past
               |
             bin/past-hook.mjs <mode>
               |
   session start   brief        recall into context; sends idle sessions left behind
-  every prompt    prompt       recall into context
+  every prompt    prompt       recall into context: ten memories, the block naming the tool
+  on demand       mcp          past_recall, the model's own recall, on a local MCP server
   every turn      stop         stamps the activity file, keeps one waiter on the session
   compaction      precompact   sends the session so far
   session end     end          hands the send to a detached process (flush)
@@ -34,6 +35,7 @@ Claude Code
 plugins/past/
   .claude-plugin/plugin.json      the manifest, including the settings form (userConfig)
   hooks/hooks.json                SessionStart, UserPromptSubmit, Stop, PreCompact, SessionEnd
+  .mcp.json                       past_recall: the script's mcp mode, started by Claude Code
   bin/past-hook.mjs               the whole connector, one file, no dependencies
   commands/                       /past:connect, :status, :cut, :ingest, :backfill
   skills/past/SKILL.md            teaches Claude when to search history
@@ -162,6 +164,15 @@ plugins/past/
     the one it was written for (`SessionStart`, `UserPromptSubmit`, `Stop`, `PreCompact`,
     `SessionEnd`) and otherwise stays silent: no recall is spent on that agent's prompts, and none
     of its conversations is booked as a session. What Claude Code's own sessions send is unchanged.
+15. **The recall tool speaks JSON-RPC alone on stdout.** `mcp` mode is a stdio MCP server, started by
+    Claude Code from `.mcp.json` and alive as long as the session. Nothing else may print there:
+    like every mode it swallows its own failures, and a failed recall is a tool result that says so
+    (`isError`), never a crash. A call is one recall, redacted as every query is (rule 5), and reads
+    the same `~/.past/config.json`. Its page (up to a hundred memories within 2,000 tokens, each with
+    its moment, a "replaced" mark and the source excerpts) and the prompt hook's ten memories were
+    set by measurement: change them with a measurement. The block before a prompt names the tool in
+    one line, which is how the model learns to call it; the line rides inside a block the script
+    already drops from what it sends (rule 13), so it changes nothing that travels.
 
 ## Beside other past.dev plugins
 
@@ -172,14 +183,15 @@ one more reason `state.json` changes only through `updateState` (rule 8). In `ac
 plugin's files are at the top; a folder in it belongs to another plugin, and the waiters only look
 at `.json` files.
 
-## Why the API and not MCP
+## Hooks first, and a tool beside them
 
-Hooks are shell commands and cannot speak MCP. Recall through a hook is injected on every prompt;
-recall through an MCP tool happens only if the model chooses to call it. The guarantee is the
-product, so the hooks use `/api/v1/recall` and `/api/v1/ingest/batch`.
-
-MCP stays the right surface for Claude web and desktop, and for conversational lookups. Adding a
-`.mcp.json` here later is additive and needs the project's MCP server enabled first.
+Hooks are shell commands and cannot speak MCP, so the write path is the API. Recall comes two ways.
+The hooks inject it on every prompt, whether or not the model would have looked: that is the
+guarantee, and it is the product. Beside them the plugin serves `past_recall` on a local MCP server,
+so the model can ask again, with its own question, for what the block does not hold. The tool calls
+the same `/api/v1/recall` with the project key in `~/.past/config.json`; it needs no MCP server on
+the project's side. MCP alone stays the right surface for Claude web and desktop, where past.dev
+cannot read the conversation and can only be recalled from.
 
 ## Contracts this depends on
 
@@ -189,7 +201,9 @@ MCP stays the right surface for Claude web and desktop, and for conversational l
   items and 16 MB of content.
 - `POST /api/v1/recall` — **`identity` is required**. Recall stays off until `/past:connect`
   sets one. The response is one result per document in rank order; the hooks read each result's
-  `content` and `occurredAt`.
+  `content` and `occurredAt`, and the tool also its sources' `excerpts` and `metadata.localTime`
+  and its artifact's `supersededAt`. The prompt hook sends `limit` 10; the tool sends `limit` 100
+  and `maxTokens` 2,000.
 - `audience` on ingest — a slug; absent means the whole project. `connect --audience` checks it
   with `GET /api/v1/audiences/{slug}` (404 when unknown); a later `audience-unknown` refusal is
   kept in `state.lastError` for `/past:status`, like every failed send.
@@ -197,6 +211,8 @@ MCP stays the right surface for Claude web and desktop, and for conversational l
 - Claude Code gives a hook `session_id`, `transcript_path`, `cwd` and `hook_event_name`, and
   takes `hookSpecificOutput.additionalContext` at session start and on a prompt.
 - A project API key (`past_sk_…`) names its own project. The plugin never sends a project id.
+- Claude Code starts a plugin's MCP server from the `mcpServers` file its manifest names, expands
+  `${CLAUDE_PLUGIN_ROOT}` in its arguments, and names its tool `mcp__plugin_past_past__past_recall`.
 
 If any of these contracts changes, this file changes with it.
 
@@ -222,6 +238,11 @@ touches your real `~/.past` or a real project: `HOME=/tmp/past-test` with a `con
 logging what arrives, and the mode under test fed its stdin JSON by hand (`echo
 '{"hook_event_name":"Stop","session_id":…,"transcript_path":…,"cwd":…}' | node plugins/past/bin/past-hook.mjs stop`). A
 small `idleMinutes` in that config makes the idle timer testable in seconds.
+
+For the tool, pipe JSON-RPC lines (`initialize`, `tools/list`, `tools/call`) into `node
+plugins/past/bin/past-hook.mjs mcp` in the same throwaway home, with a stand-in answering `POST
+/api/v1/recall`, and check what the request carried; then install the plugin from the folder into a
+throwaway `CLAUDE_CONFIG_DIR` and see `claude mcp list` report `plugin:past:past` connected.
 
 **A change to the script is checked against what it sent before.** Run the old script and the new
 one over the same transcripts, each in a throwaway home with its own stand-in, and compare what each

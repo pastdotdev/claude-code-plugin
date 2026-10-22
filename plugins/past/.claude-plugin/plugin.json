@@ -1,7 +1,7 @@
 {
   "name": "past",
   "displayName": "past.dev",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Your Claude Code sessions become memory, and every session starts briefed.",
   "author": { "name": "past.dev", "url": "https://past.dev" },
   "homepage": "https://github.com/pastdotdev/claude-code-plugin",
@@ -9,6 +9,7 @@
   "license": "MIT",
   "keywords": ["memory", "recall", "context"],
   "hooks": "./hooks/hooks.json",
+  "mcpServers": "./.mcp.json",
   "commands": ["./commands/connect.md", "./commands/status.md", "./commands/cut.md", "./commands/ingest.md", "./commands/backfill.md"],
   "skills": "./skills/",
   "userConfig": {
