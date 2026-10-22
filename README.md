@@ -17,7 +17,8 @@ reasons behind them, what was already tried and dropped.
 ```
 
 That block is what Claude reads before your prompt. It arrives on its own: Claude does not have
-to decide to look anything up.
+to decide to look anything up. When a request needs more than the block holds, Claude asks for it
+itself, with the `past_recall` tool the plugin serves.
 
 ## Get started
 
@@ -30,15 +31,12 @@ You need Claude Code and Node 16 or later.
 2. **Install the plugin.** In Claude Code:
 
    ```
-   /plugin install past --marketplace pastdotdev/claude-code-plugin
-   ```
-
-   Claude Code older than v2.1.275 adds the marketplace first:
-
-   ```
    /plugin marketplace add pastdotdev/claude-code-plugin
    /plugin install past@past
    ```
+
+   The first line adds this repository as a marketplace. The second line installs the plugin
+   from it.
 
    In the Claude desktop app, or on claude.ai: open **Customize › Plugins**, select **Add › Add
    marketplace** and enter `pastdotdev/claude-code-plugin`, then open **past.dev** and select
@@ -66,12 +64,14 @@ instead of step 3: a form that masks the key and keeps it in your system's crede
 ```text
 session opens    recall what past.dev knows about this project     ──►  into context
 every prompt     recall what past.dev knows about this prompt      ──►  into context
+any time         Claude asks past.dev itself, with past_recall     ──►  into context
 every reply      nothing is sent; the session is marked active
 compaction       the session so far is sent, before its detail is summarised away
 session over     the session is sent: closed, its window quit, or quiet for 12 hours
 ```
 
-Five hooks do this, and one script runs them all. A recall that has not answered within 4 seconds
+Five hooks and one tool do this, and one script runs them all. The block before a prompt holds
+up to ten memories; the tool returns up to a hundred, within 2,000 tokens. A recall that has not answered within 4 seconds
 (8 at session start) is dropped, so it never holds a prompt up, and a prompt shorter than 12
 characters ("yes", "go on") recalls nothing.
 

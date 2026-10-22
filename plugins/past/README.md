@@ -5,15 +5,11 @@ Your Claude Code sessions become memory, and every session opens already briefed
 ## Install
 
 ```
-/plugin install past --marketplace pastdotdev/claude-code-plugin
-```
-
-On Claude Code older than v2.1.275, `--marketplace` does not exist, so it is two steps:
-
-```
 /plugin marketplace add pastdotdev/claude-code-plugin
 /plugin install past@past
 ```
+
+The first line adds this repository as a marketplace. The second line installs the plugin from it.
 
 In the Claude desktop app, or on claude.ai: open **Customize › Plugins**, select **Add › Add
 marketplace** and enter `pastdotdev/claude-code-plugin`, then open **past.dev** and select **Add**.
@@ -38,7 +34,7 @@ prompt or session.
 | Hook | When | What |
 |---|---|---|
 | `SessionStart` | a session opens | recalls this project's history and puts it in context |
-| `UserPromptSubmit` | every prompt | recalls against the prompt and puts it in context |
+| `UserPromptSubmit` | every prompt | recalls the ten memories closest to the prompt and puts them in context |
 | `Stop` | after each reply | starts or resets the idle timer; sends nothing itself |
 | `PreCompact` | the context is about to be compacted | sends the session so far, before the detail is summarised away |
 | `SessionEnd` | a session closes | sends the session's prose to past.dev |
@@ -93,8 +89,15 @@ to the credit that is roughly 90 credits for a session.
 Without an audience everyone in the project sees what you send. `/past:connect --audience <slug>`
 narrows it to an audience from the console; `--audience project` widens it back.
 
-The bundled skill searches past.dev on demand: ask Claude what was decided, or whether something was
-tried before, and it looks.
+**And a recall tool.** The plugin also serves `past_recall`, on a small MCP server of its own
+(`.mcp.json`, run by the same script). The block before a prompt holds what was recalled for it;
+when the request depends on something that block does not hold, Claude calls `past_recall` with a
+question of its own and reads up to a hundred dated memories, within 2,000 tokens. Each call is one
+recall. Claude Code asks you before the first call: allow it, for the session or for good.
+`claude mcp list` shows the server as `plugin:past:past`.
+
+The bundled skill teaches Claude when to look history up: ask what was decided, or whether
+something was tried before, and it looks.
 
 ## Configuration
 
