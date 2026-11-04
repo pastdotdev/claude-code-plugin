@@ -32,7 +32,7 @@ You need Claude Code and Node 16 or later.
 
    ```
    /plugin marketplace add pastdotdev/claude-code-plugin
-   /plugin install past@past
+   /plugin install pastdotdev@pastdotdev
    ```
 
    The first line adds this repository as a marketplace. The second line installs the plugin
@@ -46,17 +46,17 @@ You need Claude Code and Node 16 or later.
 3. **Connect it.**
 
    ```
-   /past:connect <project-api-key> <identity>
+   /pastdotdev:connect <project-api-key> <identity>
    ```
 
    The identity is the email or id every memory is attributed to. Recall stays off without one.
 
-4. **Check it.** `/past:status` shows the project it talks to and what it has sent.
+4. **Check it.** `/pastdotdev:status` shows the project it talks to and what it has sent.
 
-New sessions are read from then on. `/past:backfill` lists the sessions already on this machine,
+New sessions are read from then on. `/pastdotdev:backfill` lists the sessions already on this machine,
 estimates what sending them costs, and sends them when you confirm.
 
-To keep the key out of the conversation, use `/plugin configure past@past` in the terminal CLI
+To keep the key out of the conversation, use `/plugin configure pastdotdev@pastdotdev` in the terminal CLI
 instead of step 3: a form that masks the key and keeps it in your system's credential store.
 
 ## How it works
@@ -94,7 +94,7 @@ and anything injected into the conversation rather than typed by a person. Strin
 keys, tokens or private keys become `[redacted]` before anything leaves, and recall queries are
 redacted the same way.
 
-`/past:cut` prints exactly what would be sent from this session, sitting by sitting, before
+`/pastdotdev:cut` prints exactly what would be sent from this session, sitting by sitting, before
 anything is.
 
 A session is about 10 MB on disk and about 30 KB of prose, and only the prose travels. At 350
@@ -105,16 +105,16 @@ see [past.dev/pricing](https://past.dev/pricing).
 
 | Command | What it does |
 |---|---|
-| `/past:connect <key> <identity> [api-url]` | connect this machine; `--audience <slug>` sets who sees what you send |
-| `/past:status` | what it is connected to, what it has sent, and the last send that failed |
-| `/past:cut [session]` | print exactly what would be sent from this session, or from one you name |
-| `/past:ingest [session]` | send one session now, without waiting for it to go quiet |
-| `/past:backfill` | list and estimate the sessions already on this machine, then send them |
+| `/pastdotdev:connect <key> <identity> [api-url]` | connect this machine; `--audience <slug>` sets who sees what you send |
+| `/pastdotdev:status` | what it is connected to, what it has sent, and the last send that failed |
+| `/pastdotdev:cut [session]` | print exactly what would be sent from this session, or from one you name |
+| `/pastdotdev:ingest [session]` | send one session now, without waiting for it to go quiet |
+| `/pastdotdev:backfill` | list and estimate the sessions already on this machine, then send them |
 
 ## Who sees what you send
 
-Everyone in the project, unless you choose an audience: `/past:connect --audience <slug>`, with a
-slug from the console's **Audiences** page. `/past:connect --audience project` widens it back.
+Everyone in the project, unless you choose an audience: `/pastdotdev:connect --audience <slug>`, with a
+slug from the console's **Audiences** page. `/pastdotdev:connect --audience project` widens it back.
 
 ## Settings
 
@@ -124,25 +124,38 @@ half off, `idleMinutes` (720) is how long a session stays quiet before it is sen
 sessions are never read. `PAST_API_KEY`, `PAST_IDENTITY` and `PAST_API_URL` override the file.
 Each setting is described in the [plugin's README](plugins/past/README.md#configuration).
 
-For a self-hosted past.dev, pass your deployment's URL as the third argument of `/past:connect`. Use
+For a self-hosted past.dev, pass your deployment's URL as the third argument of `/pastdotdev:connect`. Use
 `https`: over plain `http` to another machine the key travels unencrypted, and the plugin says so.
 
 ## When something looks wrong
 
-Start with `/past:status`. A hook never interrupts a session, so a problem shows up there rather
+Start with `/pastdotdev:status`. A hook never interrupts a session, so a problem shows up there rather
 than in the conversation.
 
 - **Nothing is recalled.** Status has to show a key and an identity: recall needs both. A new
-  project has nothing to recall until its first sessions are in; `/past:ingest` sends the current
+  project has nothing to recall until its first sessions are in; `/pastdotdev:ingest` sends the current
   one now.
 - **A send failed.** Status shows the last failed send and what the API answered.
 - **The hooks stay silent.** They call `node`. Claude Code started from the Dock or a launcher
   finds the `node` of a login shell, which may be older than your terminal's: Node 16 or later has
   to come first on that path.
 
+## Moving from past@past
+
+Before 0.3.0 the plugin was installed as `past@past`. To move to the new name, run these in Claude Code:
+
+```
+/plugin uninstall past@past
+/plugin marketplace remove past
+/plugin marketplace add pastdotdev/claude-code-plugin
+/plugin install pastdotdev@pastdotdev
+```
+
+Your connection stays in `~/.past`, so you don't need to connect again, and sessions already sent aren't sent twice.
+
 ## Remove it
 
-`/plugin uninstall past@past`, then delete `~/.past`. Revoking the key in **Build › API keys**
+`/plugin uninstall pastdotdev@pastdotdev`, then delete `~/.past`. Revoking the key in **Build › API keys**
 stops it at once from the server side. What was already sent stays in the project until you
 delete it in the console.
 
@@ -157,7 +170,7 @@ plugins/past/
   .claude-plugin/plugin.json      the manifest, with the settings form
   hooks/hooks.json                the five hooks
   bin/past-hook.mjs               the whole plugin: one file, Node 16, no dependencies
-  commands/                       /past:connect, :status, :cut, :ingest, :backfill
+  commands/                       /pastdotdev:connect, :status, :cut, :ingest, :backfill
   skills/past/SKILL.md            teaches Claude when to search past.dev
 ```
 

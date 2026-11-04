@@ -1,5 +1,5 @@
 {
-  "name": "past",
+  "name": "pastdotdev",
   "description": "Connectors that give Claude Code a memory, built on the past.dev Memory API.",
   "owner": {
     "name": "past.dev",
@@ -7,10 +7,10 @@
   },
   "plugins": [
     {
-      "name": "past",
+      "name": "pastdotdev",
       "source": "./plugins/past",
       "description": "Your Claude Code sessions become memory, and every session starts briefed.",
-      "version": "0.2.1",
+      "version": "0.3.0",
       "author": {
         "name": "past.dev",
         "url": "https://past.dev"

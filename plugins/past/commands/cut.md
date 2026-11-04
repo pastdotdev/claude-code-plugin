@@ -25,7 +25,7 @@ sittings, one data point each: a new one starts where the session went quiet for
 (30 by default), and each begins with its own heading. The first line names the session and its sittings,
 and reports the size on disk, the size sent, and what sending it now costs. The last line says what
 happens next and, unless it is already in past.dev, the command that sends this session now
-(`/past:ingest`). Relay that line as it is.
+(`/pastdotdev:ingest`). Relay that line as it is.
 
 Then, unless the last line says the session is already in past.dev, ask the user one yes/no question:
 **"Send this session to past.dev now? About N credits."**, with N from the first line. If they say

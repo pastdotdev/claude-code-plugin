@@ -6,7 +6,7 @@ Your Claude Code sessions become memory, and every session opens already briefed
 
 ```
 /plugin marketplace add pastdotdev/claude-code-plugin
-/plugin install past@past
+/plugin install pastdotdev@pastdotdev
 ```
 
 The first line adds this repository as a marketplace. The second line installs the plugin from it.
@@ -19,13 +19,13 @@ terminal, from the next session on; `/reload-plugins` loads it into a session al
 Then connect it, wherever Claude Code runs:
 
 ```
-/past:connect <project-api-key> <identity> [api-url]
+/pastdotdev:connect <project-api-key> <identity> [api-url]
 ```
 
 The project API key starts with `past_sk_` and comes from **Build › API keys** in the
 [console](https://app.past.dev) (not the project's id, and not the organization's `past_mk_`
 management key); the identity is who every memory is attributed to, and the API URL is for
-self-host only. In the terminal CLI, `/plugin configure past@past` does the same through a form
+self-host only. In the terminal CLI, `/plugin configure pastdotdev@pastdotdev` does the same through a form
 that masks the key and keeps it in your system's credential store; it takes effect at your next
 prompt or session.
 
@@ -53,7 +53,7 @@ together while the agent works on it, however long. When a session continues, on
 and the new ones are sent again.
 
 `SessionStart` also sends any earlier session that never reached past.dev and has gone idle, which is
-what covers a crash or a machine that slept. `/past:status` counts sessions as *sent* and *open*;
+what covers a crash or a machine that slept. `/pastdotdev:status` counts sessions as *sent* and *open*;
 an open session leaves the list by itself once it is in past.dev unchanged and idle, or holds nothing
 to send.
 
@@ -71,7 +71,7 @@ Not sent: tool results, file contents, diffs, command output, subagent threads, 
 the agent injected rather than a person typing it. Strings that look like keys, tokens or
 private keys are replaced with `[redacted]` before anything is sent.
 
-Run `/past:cut` to read exactly what would be sent, before you send it.
+Run `/pastdotdev:cut` to read exactly what would be sent, before you send it.
 
 A session is about 10 MB on disk and about 30 KB of prose. past.dev sends the prose. At 350 bytes
 to the credit that is roughly 90 credits for a session.
@@ -80,13 +80,13 @@ to the credit that is roughly 90 credits for a session.
 
 | Command | Does |
 |---|---|
-| `/past:connect` | store the key, identity and audience in `~/.past/config.json`, mode `600` |
-| `/past:status` | what it is connected to, what it has sent, and the last send that failed |
-| `/past:cut [session]` | print exactly what would be sent from this session, or from one you name |
-| `/past:ingest [session]` | send one session now — this one, or one you name |
-| `/past:backfill` | list and estimate, then send, every unsent session already on this machine |
+| `/pastdotdev:connect` | store the key, identity and audience in `~/.past/config.json`, mode `600` |
+| `/pastdotdev:status` | what it is connected to, what it has sent, and the last send that failed |
+| `/pastdotdev:cut [session]` | print exactly what would be sent from this session, or from one you name |
+| `/pastdotdev:ingest [session]` | send one session now — this one, or one you name |
+| `/pastdotdev:backfill` | list and estimate, then send, every unsent session already on this machine |
 
-Without an audience everyone in the project sees what you send. `/past:connect --audience <slug>`
+Without an audience everyone in the project sees what you send. `/pastdotdev:connect --audience <slug>`
 narrows it to an audience from the console; `--audience project` widens it back.
 
 **And a recall tool.** The plugin also serves `past_recall`, on a small MCP server of its own
@@ -94,7 +94,7 @@ narrows it to an audience from the console; `--audience project` widens it back.
 when the request depends on something that block does not hold, Claude calls `past_recall` with a
 question of its own and reads up to a hundred dated memories, within 2,000 tokens. Each call is one
 recall. Claude Code asks you before the first call: allow it, for the session or for good.
-`claude mcp list` shows the server as `plugin:past:past`.
+`claude mcp list` shows the server as `plugin:pastdotdev:past`.
 
 The bundled skill teaches Claude when to look history up: ask what was decided, or whether
 something was tried before, and it looks.
@@ -140,9 +140,22 @@ Everything lives in `~/.past/`, a folder only you can open: `config.json` (the c
 `state.json` (what was sent, as content hashes) and `activity/` (one small file per open session,
 for the idle timer).
 
+## Moving from past@past
+
+Before 0.3.0 the plugin was installed as `past@past`. To move to the new name, run these in Claude Code:
+
+```
+/plugin uninstall past@past
+/plugin marketplace remove past
+/plugin marketplace add pastdotdev/claude-code-plugin
+/plugin install pastdotdev@pastdotdev
+```
+
+Your connection stays in `~/.past`, so you don't need to connect again, and sessions already sent aren't sent twice.
+
 ## Removing it
 
-`/plugin uninstall past@past`, then delete `~/.past`. Revoking the key in **Build › API keys**
+`/plugin uninstall pastdotdev@pastdotdev`, then delete `~/.past`. Revoking the key in **Build › API keys**
 stops it immediately from the server side. What was already sent stays until you delete it in the
 console.
 
@@ -156,5 +169,5 @@ After `402 out-of-credits`, the plugin pauses the refused operation and keeps un
 A write refusal does not pause recall. A recall refusal pauses recall separately.
 On later calls, the plugin checks the balance at most once per five minutes for each paused operation.
 The plugin resumes when the balance covers the refused call. The server checks the balance again for each request.
-Run `/past:status --refresh` after you add credits to check the balance now.
+Run `/pastdotdev:status --refresh` after you add credits to check the balance now.
 A new API key or API URL starts with no pause from the previous connection.
