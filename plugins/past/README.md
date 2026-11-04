@@ -149,3 +149,12 @@ console.
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+## Credits
+
+After `402 out-of-credits`, the plugin pauses the refused operation and keeps unsent data locally.
+A write refusal does not pause recall. A recall refusal pauses recall separately.
+On later calls, the plugin checks the balance at most once per five minutes for each paused operation.
+The plugin resumes when the balance covers the refused call. The server checks the balance again for each request.
+Run `/past:status --refresh` after you add credits to check the balance now.
+A new API key or API URL starts with no pause from the previous connection.
