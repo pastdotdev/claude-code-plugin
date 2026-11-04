@@ -34,6 +34,7 @@ Claude Code
 .claude-plugin/marketplace.json   the catalog — this repository is the marketplace
 plugins/past/
   .claude-plugin/plugin.json      the manifest, including the settings form (userConfig)
+  .claude-plugin/icon.png         the directory listing's icon, taken once at the first save
   hooks/hooks.json                SessionStart, UserPromptSubmit, Stop, PreCompact, SessionEnd
   .mcp.json                       past_recall: the script's mcp mode, started by Claude Code
   bin/past-hook.mjs               the whole connector, one file, no dependencies
@@ -42,6 +43,11 @@ plugins/past/
   LICENSE                         the same license: an install copies this folder and nothing else
 .github/workflows/check.yml       every pull request: the script parses and runs, the manifests validate
 ```
+
+Credit refusals persist per operation in this host's state book, under `creditPauses`.
+Each pause stores a connection fingerprint, required credits, and the next balance check time.
+Use `updateState` for every change. Keep transcript hashes and pending sessions intact on a refusal.
+`status --refresh` reads `/api/v1/usage` before it clears a pause. A write pause leaves recall available.
 
 ## The rules this code keeps
 

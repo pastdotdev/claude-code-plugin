@@ -458,8 +458,51 @@ async function request(url, options) {
 
 // Every call is time-boxed. A slow network must never hold a prompt, so the caller's budget is
 // the hook's budget, and an expired call simply returns nothing.
+// Each operation pauses independently. Free reads remain available after a write refusal.
+const CREDIT_CHECK_MS = 5 * 60 * 1000;
+const creditAccount = (config) => hashOf(`${config.apiUrl}\n${config.apiKey}`);
+function creditPause(config, operation) {
+  const pauses = book(loadState()).creditPauses;
+  const pause = pauses && pauses[operation];
+  return pause && pause.account === creditAccount(config) ? pause : null;
+}
+
+async function checkCredits(config, operation, timeoutMs, force = false) {
+  const pause = creditPause(config, operation);
+  if (!pause) return true;
+  const now = Date.now();
+  let claimed = false;
+  updateState((fresh) => {
+    const own = book(fresh);
+    const current = own.creditPauses && own.creditPauses[operation];
+    if (current && current.account === pause.account && (force || current.nextCheck <= now)) {
+      current.nextCheck = now + CREDIT_CHECK_MS;
+      claimed = true;
+    }
+  });
+  if (!claimed) return false;
+  const usage = await api(config, '/api/v1/usage', null, timeoutMs, 'GET');
+  if (!usage || usage.error) return false;
+  const available = usage.metered === false || (usage.balance &&
+    typeof usage.balance.left === 'number' && usage.balance.left >= pause.needed);
+  if (!available) return false;
+  updateState((fresh) => {
+    const own = book(fresh);
+    const current = own.creditPauses && own.creditPauses[operation];
+    if (current && current.account === pause.account && current.at === pause.at)
+      delete own.creditPauses[operation];
+  });
+  return !creditPause(config, operation);
+}
+
 async function api(config, path, body, timeoutMs, method = 'POST') {
   if (!config.apiKey) return null;
+  const operation = method === 'POST' && ['/api/v1/ingest', '/api/v1/ingest/batch'].includes(path) ? 'ingest'
+    : method === 'POST' && path === '/api/v1/recall' ? 'recall' : null;
+  const started = Date.now();
+  if (operation && !await checkCredits(config, operation, Math.min(timeoutMs, 2000)))
+    return { error: 402, body: JSON.stringify({ code: 'out-of-credits' }), paused: true };
+  timeoutMs = Math.max(1, timeoutMs - (Date.now() - started));
   const control = new AbortController();
   const timer = setTimeout(() => control.abort(), timeoutMs);
   try {
@@ -473,7 +516,23 @@ async function api(config, path, body, timeoutMs, method = 'POST') {
       body: body === null ? undefined : JSON.stringify(body),
       signal: control.signal,
     });
-    if (!response.ok) return { error: response.status, body: await response.text().catch(() => '') };
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      let refusal;
+      try { refusal = JSON.parse(text); } catch { /* Keep the HTTP error. */ }
+      if (operation && response.status === 402 && refusal && refusal.code === 'out-of-credits') {
+        const needed = refusal.data && refusal.data.creditsNeeded;
+        updateState((fresh) => {
+          const own = book(fresh);
+          if (!own.creditPauses) own.creditPauses = {};
+          own.creditPauses[operation] = {
+            account: creditAccount(config), at: Date.now(), nextCheck: Date.now() + CREDIT_CHECK_MS,
+            needed: typeof needed === 'number' && needed > 0 ? needed : 1,
+          };
+        });
+      }
+      return { error: response.status, body: text };
+    }
     return await response.json().catch(() => ({}));
   } catch {
     return null;
@@ -1255,13 +1314,18 @@ async function modeSearch(config, argv) {
   if (!config.apiKey) { console.log(`Not connected. Run ${commandOf('connect')} first.`); return; }
   if (!config.identity) { console.log(`No identity set. Run ${commandOf('connect')} to set one.`); return; }
   const memories = await recall(config, query, 8, 15000);
+  if (creditPause(config, 'recall')) { console.log(`Recall paused: insufficient credits. Run ${commandOf('status')} --refresh after you add credits.`); return; }
   if (!memories.length) { console.log('Nothing in past.dev matches that yet.'); return; }
   for (const [index, memory] of memories.entries()) {
     console.log(`[${index + 1}] ${(memory.at || '').slice(0, 10)} — ${memory.content.replace(/\s+/g, ' ').trim()}`);
   }
 }
 
-function modeStatus(config) {
+async function modeStatus(config, argv) {
+  if (argv.includes('--refresh')) {
+    for (const operation of ['ingest', 'recall'])
+      await checkCredits(config, operation, 2000, true);
+  }
   // Heals before it reports: a session left overdue by a dead or outdated waiter is sent now.
   try { ensureWaiters(); } catch { /* status still reports */ }
   const state = updateState((fresh) => tidyPending(fresh, config, ''));
@@ -1298,6 +1362,10 @@ function modeStatus(config) {
       parts.push(`the next is sent at ${time} if nothing more is said (${window} idle)`);
     }
     lines.push(`Idle timer ${parts.join('; ')}`);
+  }
+  for (const operation of ['ingest', 'recall']) {
+    if (creditPause(config, operation))
+      lines.push(`Credits    ${operation} paused. Unsent data stays local. Run ${commandOf('status')} --refresh after you add credits.`);
   }
   const { lastError } = book(state);
   if (lastError) {
@@ -1410,7 +1478,7 @@ try {
   else if (mode === 'idle') await modeIdle(config, argv);
   else if (mode === 'flush') await modeFlush(config, argv);
   else if (mode === 'precompact') await modePreCompact(config);
-  else if (mode === 'status') modeStatus(config);
+  else if (mode === 'status') await modeStatus(config, argv);
   else if (mode === 'cut') modeCut(config, argv);
   else if (mode === 'search') await modeSearch(config, argv);
   else if (mode === 'backfill') await modeBackfill(config, argv);
