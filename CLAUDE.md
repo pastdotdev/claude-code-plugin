@@ -19,7 +19,7 @@ Claude Code
   every prompt    prompt       recall into context: ten memories, the block naming the tool
   on demand       mcp          past_recall, the model's own recall, on a local MCP server
   every turn      stop         stamps the activity file, keeps one waiter on the session
-  compaction      precompact   sends the session so far
+  compaction      precompact   sends the sittings that closed; the one still open at most once an hour
   session end     end          hands the send to a detached process (flush)
   detached        idle         the waiter: sends once Claude Code's process is gone, or after idleMinutes
               |
@@ -64,6 +64,12 @@ Use `updateState` for every change. Keep transcript hashes and pending sessions 
    the key's per-minute budget. Do not remove it.
 4. **Send when a session ends, goes idle, closes or compacts; never from `Stop` itself.** `Stop`
    fires every turn, and a session that grew sends its last sitting again as a new revision.
+   - `PreCompact` sends the sittings that closed since the last send, once each, and the one still
+     open only when the session's last send is an hour old (`COMPACTION_RESEND_MS`). A session that
+     never goes quiet compacts every few minutes, and sent whole at each one it was a new paid
+     revision every time; the transcript on disk loses nothing at a compaction. The held sitting
+     keeps its old hash in `state.json` and the whole hash stays as it was, so it goes with the
+     session's end or idle send.
    - `Stop` only stamps `~/.past/activity/<session>.json` and keeps one detached waiter (`idle`
      mode) per session. The waiter sends once the last turn is `idleMinutes` old (720 by
      default), measured on the wall clock: it sleeps in one-minute slices, because a timer does
@@ -125,9 +131,11 @@ Use `updateState` for every change. Keep transcript hashes and pending sessions 
     `renderTranscript` prints are part of the content hash. A changed byte makes `backfill` send
     every session already in past.dev again, as a paid revision. The same holds for `SOURCE`, `AGENT`
     and `SPEAKER` at the top of the script. `sittingId` and the cut (`sittingsOf`,
-    `silenceMeter`) are fixed for a related reason: changed, they move the boundaries of every
+    `silenceMeter`, the size measured on the turns' own text) are fixed for a related reason: changed, they move the boundaries of every
     session that grows afterwards, its sittings are sent again under their new ids, and the old ones
-    stay in past.dev beside them. A person's `sittingMinutes` cannot do that (rule 12).
+    stay in past.dev beside them. A person's `sittingMinutes` and `sittingKilobytes` cannot do that (rule 12). The one exception
+    made so far is the branch a sitting is rendered with (rule 12, 5 November 2026), bounded to
+    sessions that switched branches and still grow.
 11. **`~/.past` is the person's alone, and the key never travels in the clear unnoticed.** The
     folder is made `700` and every file in it is created `600` (`privateDir`, `writePrivate`):
     never written open and narrowed afterwards, since a file that holds the key would be readable
@@ -143,11 +151,24 @@ Use `updateState` for every change. Keep transcript hashes and pending sessions 
     their results included (`silenceMeter`), and over nothing else: other lines, such as a pull
     request's status, are written while nobody is there. So a prompt stays with its reply while the
     agent works; one tool call that writes nothing for longer than a sitting is the case that parts
-    them. Each sitting is one data point timed at its first turn. A session only grows at its end,
-    so a sitting never changes once the next has begun.
-    - `state.json` pins `sittingMinutes` per session at its first send. A changed value applies to
-      the sessions sent after it: moving the boundaries of one already in past.dev would send its
-      sittings again under shifted ids and leave the old ones beside them.
+    them. A new sitting also starts once the one so far holds `sittingKilobytes` of prose (50 by
+    default, 10 at least), measured on the turns' own text, and only once the agent has answered:
+    between two of its turns, or before the person's next prompt, never between a prompt and its
+    first answer. So a session that never goes quiet, an agent in a loop for hours, is cut all the
+    same, and what a send of it carries again is one sitting rather than the whole. Each sitting is
+    one data point timed at its first turn. A session only grows at its end, so a sitting never
+    changes once the next has begun.
+    - `state.json` pins `sittingMinutes` and `sittingKilobytes` per session at its first send. A
+      changed value applies to the sessions sent after it: moving the boundaries of one already in
+      past.dev would send its sittings again under shifted ids and leave the old ones beside them.
+      A session sent in sittings before the size existed is pinned to no size (`0`), for the same
+      reason.
+    - A sitting is rendered and labelled with the branch current at its first turn (`turn.branch`,
+      the transcript's `gitBranch` at that entry); the whole session, whose hash is what recognises
+      one sent whole, keeps the last. Until 5 November 2026 every sitting carried the session's
+      last branch, so a switch mid-session changed every sitting's head line and sent every closed
+      sitting again as a paid revision. A session that never switched renders as it did; one that
+      switched and still grows sends its closed sittings once more, under their own branch.
     - The first sitting keeps the id a whole session had (`claude-code:<sessionId>`); the others
       are `claude-code:<sessionId>:<n>`. A session sent whole before sittings existed is left
       alone while it is unchanged (its whole hash still matches), and when it grows its first

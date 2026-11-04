@@ -36,7 +36,7 @@ prompt or session.
 | `SessionStart` | a session opens | recalls this project's history and puts it in context |
 | `UserPromptSubmit` | every prompt | recalls the ten memories closest to the prompt and puts them in context |
 | `Stop` | after each reply | starts or resets the idle timer; sends nothing itself |
-| `PreCompact` | the context is about to be compacted | sends the session so far, before the detail is summarised away |
+| `PreCompact` | the context is about to be compacted | sends the sittings that closed since the last send; the one still open at most once an hour |
 | `SessionEnd` | a session closes | sends the session's prose to past.dev |
 
 A session also counts as over after 12 hours without a new turn (`idleMinutes` in
@@ -46,7 +46,9 @@ window instead of the conversation (quitting VS Code or the app) skips `SessionE
 notices the conversation's process is gone and sends it within a minute.
 
 **A session is sent in sittings.** A new sitting starts where the session went quiet for 30
-minutes (`sittingMinutes`): nobody wrote and the agent ran nothing. Each sitting is dated at its own
+minutes (`sittingMinutes`): nobody wrote and the agent ran nothing. One also starts once the
+sitting so far holds 50 KB of prose (`sittingKilobytes`), after the agent's reply, so a session that
+never pauses is cut all the same. Each sitting is dated at its own
 first turn, and what past.dev remembers takes the date of the sitting it came from, so something said
 on the third day of a conversation that ran for three days is dated that day. A prompt and its reply stay
 together while the agent works on it, however long. When a session continues, only its last sitting
@@ -58,8 +60,9 @@ an open session leaves the list by itself once it is in past.dev unchanged and i
 to send.
 
 **Compaction is the moment this matters most.** When the window fills, Claude Code summarises
-everything before the boundary and drops the detail. `PreCompact` sends the session first, so the
-prose is durable; `SessionStart` then fires again with source `compact`, and its recall is aimed at
+everything before the boundary and drops the detail. `PreCompact` sends the sittings that closed since
+the last send, and the one still open at most once an hour, since the transcript on disk keeps every
+turn; `SessionStart` then fires again with source `compact`, and its recall is aimed at
 what this session was doing rather than at the project at large — which is exactly what the model
 has just lost.
 
@@ -113,6 +116,7 @@ something was tried before, and it looks.
   "ingest": true,
   "idleMinutes": 720,
   "sittingMinutes": 30,
+  "sittingKilobytes": 50,
   "deny": ["/Users/you/clients/acme"]
 }
 ```
@@ -124,6 +128,9 @@ something was tried before, and it looks.
 - `sittingMinutes` is how long a session stays quiet before what follows starts a new sitting (30
   by default, 5 at least). Shorter dates what past.dev remembers more closely, in more and smaller
   data points. A session keeps the length it was first sent with.
+- `sittingKilobytes` is how much prose a sitting holds before the next turn starts a new one (50
+  by default, 10 at least), the cut waiting for the agent's reply. A session keeps the size it was
+  first sent with.
 - `deny` holds path fragments. A session whose working directory matches one is ignored
   completely — nothing is read and nothing is sent.
 - `PAST_API_KEY`, `PAST_IDENTITY` and `PAST_API_URL` override the file.
