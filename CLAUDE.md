@@ -38,7 +38,7 @@ plugins/past/
   hooks/hooks.json                SessionStart, UserPromptSubmit, Stop, PreCompact, SessionEnd
   .mcp.json                       past_recall: the script's mcp mode, started by Claude Code
   bin/past-hook.mjs               the whole connector, one file, no dependencies
-  commands/                       /past:connect, :status, :cut, :ingest, :backfill
+  commands/                       /pastdotdev:connect, :status, :cut, :ingest, :backfill
   skills/past/SKILL.md            teaches Claude when to search history
   LICENSE                         the same license: an install copies this folder and nothing else
 .github/workflows/check.yml       every pull request: the script parses and runs, the manifests validate
@@ -52,7 +52,7 @@ Use `updateState` for every change. Keep transcript hashes and pending sessions 
 ## The rules this code keeps
 
 1. **A hook never breaks the session.** Every mode exits 0, prints valid JSON or nothing, and
-   swallows its own failures. `/past:status` is where a person learns something is wrong, so a
+   swallows its own failures. `/pastdotdev:status` is where a person learns something is wrong, so a
    failed send is kept in `state.lastError` for it.
 2. **Only prose travels.** A session is ~10 MB on disk and ~30 KB of prose. Tool results, file
    contents, diffs, subagent threads and harness-injected turns are cut. Sending the transcript
@@ -74,7 +74,7 @@ Use `updateState` for every change. Keep transcript hashes and pending sessions 
      Closing a window or quitting the app kills it without a `SessionEnd`; the waiter sees it gone
      within the minute and sends the session as ended. There is no `ps` on Windows, so no owner
      there, and the idle timer alone applies.
-   - `ensureWaiters` (`Stop`, `SessionStart`, `/past:status`) replaces a waiter that died or that
+   - `ensureWaiters` (`Stop`, `SessionStart`, `/pastdotdev:status`) replaces a waiter that died or that
      an older `WAITER_VERSION` started — bump it whenever the waiter changes — and a replacement
      past its deadline sends at once. A waiter that a newer copy started is left alone.
    - In Claude Code, `SessionEnd` clears the stamp and detaches the send (`flush` mode), because
@@ -96,8 +96,8 @@ Use `updateState` for every change. Keep transcript hashes and pending sessions 
    One session is `ingest`, which sends at once — running it is the consent — and may send the
    current one, which then stays pending. `cut` defaults to the current session, then to the most
    recently written transcript, never the largest.
-7. **Two ways in, one store.** `/past:connect` works wherever Claude Code runs and is the one the
-   docs lead with. The settings form (`userConfig`, opened by `/plugin configure past@past` in the
+7. **Two ways in, one store.** `/pastdotdev:connect` works wherever Claude Code runs and is the one the
+   docs lead with. The settings form (`userConfig`, opened by `/plugin configure pastdotdev@pastdotdev` in the
    terminal CLI only; the key masked and kept in the system credential store) is the alternative.
    Both end in `~/.past/config.json`, which every mode reads. Form values reach
    hooks only, as `CLAUDE_PLUGIN_OPTION_*`, so they land at the next hook, not when the form
@@ -159,11 +159,14 @@ Use `updateState` for every change. Keep transcript hashes and pending sessions 
 
 13. **The product is written past.dev.** Every sentence a person reads says past.dev: the READMEs,
     the manifests' display names, the commands' and the skill's text, what a mode prints.
-    Identifiers keep `past`: the plugin and marketplace names (`past@past`), the commands
-    (`/past:connect`), `~/.past`, the key prefix `past_sk_` and the data point ids. So does the
-    recall block's header, `=== past · recalled from memory ===`: the script drops a block by that
-    exact text from the sessions it sends, so a changed header would change how old sessions render
-    and send them all again (rule 10).
+    An identifier that cannot hold the dot says `pastdotdev`: the plugin and marketplace names
+    (`pastdotdev@pastdotdev`, since 0.3.0) and so the commands (`/pastdotdev:connect`). A few
+    identifiers keep `past` because changing them would break what is already in place: `~/.past`
+    (shared with the other past.dev plugins), the key prefix `past_sk_`, the data point ids, the MCP
+    server `past` in `.mcp.json` and its tool `past_recall`, and the recall block's header,
+    `=== past · recalled from memory ===`. The script drops a block by that exact text from the
+    sessions it sends, so a changed header would change how old sessions render and send them all
+    again (rule 10).
 14. **A hook answers Claude Code's own events alone.** Another agent can load this plugin's hooks
     and run them on events of its own, about a conversation that is not Claude Code's. Claude Code
     names the event in every hook's input (`hook_event_name`), so each hook mode checks that it is
@@ -205,20 +208,20 @@ cannot read the conversation and can only be recalled from.
   every memory drawn from the item, `label` names the session, `metadata` carries
   `conversationId`, `sessionId`, `project`, `gitBranch`, `sitting`. A batch takes up to 1,000
   items and 16 MB of content.
-- `POST /api/v1/recall` — **`identity` is required**. Recall stays off until `/past:connect`
+- `POST /api/v1/recall` — **`identity` is required**. Recall stays off until `/pastdotdev:connect`
   sets one. The response is one result per document in rank order; the hooks read each result's
   `content` and `occurredAt`, and the tool also its sources' `excerpts` and `metadata.localTime`
   and its artifact's `supersededAt`. The prompt hook sends `limit` 10; the tool sends `limit` 100
   and `maxTokens` 2,000.
 - `audience` on ingest — a slug; absent means the whole project. `connect --audience` checks it
   with `GET /api/v1/audiences/{slug}` (404 when unknown); a later `audience-unknown` refusal is
-  kept in `state.lastError` for `/past:status`, like every failed send.
+  kept in `state.lastError` for `/pastdotdev:status`, like every failed send.
 - `UserPromptSubmit` gives the prompt as `prompt` on stdin.
 - Claude Code gives a hook `session_id`, `transcript_path`, `cwd` and `hook_event_name`, and
   takes `hookSpecificOutput.additionalContext` at session start and on a prompt.
 - A project API key (`past_sk_…`) names its own project. The plugin never sends a project id.
 - Claude Code starts a plugin's MCP server from the `mcpServers` file its manifest names, expands
-  `${CLAUDE_PLUGIN_ROOT}` in its arguments, and names its tool `mcp__plugin_past_past__past_recall`.
+  `${CLAUDE_PLUGIN_ROOT}` in its arguments, and names its tool `mcp__plugin_pastdotdev_past__past_recall`.
 
 If any of these contracts changes, this file changes with it.
 
@@ -248,7 +251,7 @@ small `idleMinutes` in that config makes the idle timer testable in seconds.
 For the tool, pipe JSON-RPC lines (`initialize`, `tools/list`, `tools/call`) into `node
 plugins/past/bin/past-hook.mjs mcp` in the same throwaway home, with a stand-in answering `POST
 /api/v1/recall`, and check what the request carried; then install the plugin from the folder into a
-throwaway `CLAUDE_CONFIG_DIR` and see `claude mcp list` report `plugin:past:past` connected.
+throwaway `CLAUDE_CONFIG_DIR` and see `claude mcp list` report `plugin:pastdotdev:past` connected.
 
 **A change to the script is checked against what it sent before.** Run the old script and the new
 one over the same transcripts, each in a throwaway home with its own stand-in, and compare what each

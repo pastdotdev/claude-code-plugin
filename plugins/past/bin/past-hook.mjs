@@ -49,7 +49,7 @@ const SYNTHETIC = [
 ];
 
 // How a person runs one of the plugin's commands.
-const commandOf = (name) => `/past:${name}`;
+const commandOf = (name) => `/pastdotdev:${name}`;
 // The command that opens Claude Code's settings form for the plugin.
 const SETTINGS_FORM = '/plugin configure';
 // Claude Code names a transcript after its session.
@@ -112,7 +112,7 @@ function loadConfig() {
 // The settings form Claude Code shows when the plugin is enabled (`userConfig` in plugin.json)
 // reaches hooks only, as environment variables; commands Claude runs through Bash never see it.
 // So a hook copies what the form holds into config.json, the one store every mode reads — but
-// only a value that changed since the last copy, so a later /past:connect is not overwritten at
+// only a value that changed since the last copy, so a later /pastdotdev:connect is not overwritten at
 // the next session start. Whichever of the two changed last wins. The state keeps a hash of what
 // was copied, never the value. Clearing a form field clears nothing: the file keeps the last value.
 const PLUGIN_OPTIONS = {
@@ -131,14 +131,14 @@ function adoptPluginOptions() {
     const value = (process.env[variable] || '').trim();
     if (!value) continue;
     if (field === 'apiKey' && !value.startsWith('past_sk_')) {
-      // Refused, but said out loud: /past:status reports it, so a wrong paste is not a mystery.
+      // Refused, but said out loud: /pastdotdev:status reports it, so a wrong paste is not a mystery.
       const problem = value.startsWith('past_mk_') ? 'management' : 'not-a-key';
       if (state.optionProblem !== problem) { state.optionProblem = problem; changed = true; }
       continue;
     }
     if (field === 'apiKey' && state.optionProblem) { delete state.optionProblem; changed = true; }
     const hash = createHash('sha256').update(value).digest('hex');
-    // A value already copied is left alone so a later /past:connect wins, unless the file lost it
+    // A value already copied is left alone so a later /pastdotdev:connect wins, unless the file lost it
     // (deleted or edited by hand): then the form is the only place it still lives.
     if (copied[field] === hash && file[field]) continue;
     file[field] = value;
@@ -758,7 +758,7 @@ async function ingestSession(config, state, sessionId, transcriptPath, context, 
   }, 30000);
 
   if (!result || result.error) {
-    // Hooks stay silent by design, so the failure is kept for /past:status to report.
+    // Hooks stay silent by design, so the failure is kept for /pastdotdev:status to report.
     let code = '';
     try { code = JSON.parse(result.body).code || ''; } catch { /* not JSON */ }
     const lastError = { at: new Date().toISOString(), status: result ? result.error : 'unreachable', code };
@@ -1024,7 +1024,7 @@ async function modeStop(config) {
 /**
  * Every open session has exactly one live waiter of the current version. A waiter that died (a
  * reboot, a killed process) or that an older version started is replaced; a replacement whose
- * deadline has already passed sends at once. Stop, SessionStart and /past:status all run this, so
+ * deadline has already passed sends at once. Stop, SessionStart and /pastdotdev:status all run this, so
  * a session that went overdue while nothing watched it is sent the next time any of them runs.
  * A waiter that a newer copy of the plugin started is left alone: an older copy can still be
  * running beside it.
@@ -1159,7 +1159,7 @@ const credits = (bytes) => Math.ceil(bytes / 350);
 const creditsOf = (parts) => parts.reduce((sum, part) => sum + credits(part.bytes), 0);
 
 // Sending the history already on disk: every unsent session of this project, or of every project
-// with --all. One session is /past:ingest. The session this command runs in is never part of it:
+// with --all. One session is /pastdotdev:ingest. The session this command runs in is never part of it:
 // the hooks send it when it goes idle or ends, and sending it now as well would pay for it twice.
 async function modeBackfill(config, argv) {
   const all = argv.includes('--all');
@@ -1244,7 +1244,7 @@ function targetSession(argv, cwd) {
 }
 
 // Sending one session now, by hand: the save beside the auto-save. It is usually a session that
-// was just read with /past:cut. The session this runs in can be sent too; it stays open, and if it
+// was just read with /pastdotdev:cut. The session this runs in can be sent too; it stays open, and if it
 // grows its last sitting is sent again when it goes idle or ends, with any sitting begun since.
 async function modeIngest(config, argv) {
   if (!config.apiKey) { console.log(`Not connected. Run ${commandOf('connect')} first.`); return; }
@@ -1391,7 +1391,7 @@ async function modeStatus(config, argv) {
 
 /**
  * Checks an audience slug with the project's own key. It answers true, false (no such audience),
- * or null when the API could not be asked — then the slug is kept and /past:status reports a
+ * or null when the API could not be asked — then the slug is kept and /pastdotdev:status reports a
  * refusal at the first send.
  */
 async function audienceExists(config, slug) {
@@ -1488,7 +1488,7 @@ try {
   else console.log('Usage: past-hook <brief|prompt|stop|end|precompact|status|search|cut|ingest|backfill|connect|mcp>');
 } catch {
   // A hook that throws must still not break the session. The failure is swallowed on purpose;
-  // /past:status is where a person finds out something is wrong.
+  // /pastdotdev:status is where a person finds out something is wrong.
 }
 // An older Node writes to a pipe asynchronously, and an exit cuts off what the pipe has not taken
 // yet: a long `cut` lost everything past its first eight kilobytes. So the exit waits for both streams.
