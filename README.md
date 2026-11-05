@@ -66,7 +66,7 @@ session opens    recall what past.dev knows about this project     ──►  in
 every prompt     recall what past.dev knows about this prompt      ──►  into context
 any time         Claude asks past.dev itself, with past_recall     ──►  into context
 every reply      nothing is sent; the session is marked active
-compaction       the session so far is sent, before its detail is summarised away
+compaction       the sittings that closed are sent; the one still open at most once an hour
 session over     the session is sent: closed, its window quit, or quiet for 12 hours
 ```
 
@@ -76,7 +76,7 @@ up to ten memories; the tool returns up to a hundred, within 2,000 tokens. A rec
 characters ("yes", "go on") recalls nothing.
 
 **A session is sent in sittings.** Where a conversation went quiet for 30 minutes, the next turn
-starts a new sitting. Each sitting is dated at its own first turn, so a decision made on the third
+starts a new sitting; so does the next one after 50 KB of prose, once Claude has answered. Each sitting is dated at its own first turn, so a decision made on the third
 day of a long conversation is remembered on that day, and past.dev can tell which of two statements
 came later. A session that continues sends its last sitting and the new ones again, nothing
 earlier.
@@ -120,8 +120,9 @@ slug from the console's **Audiences** page. `/pastdotdev:connect --audience proj
 
 `~/.past/config.json` holds the connection and a few switches: `recall` and `ingest` turn either
 half off, `idleMinutes` (720) is how long a session stays quiet before it is sent,
-`sittingMinutes` (30) is how long a pause starts a new sitting, and `deny` lists paths whose
-sessions are never read. `PAST_API_KEY`, `PAST_IDENTITY` and `PAST_API_URL` override the file.
+`sittingMinutes` (30) is how long a pause starts a new sitting, `sittingKilobytes` (50) how much
+prose does, and `deny` lists paths whose sessions are never read. `PAST_API_KEY`, `PAST_IDENTITY`
+and `PAST_API_URL` override the file.
 Each setting is described in the [plugin's README](plugins/past/README.md#configuration).
 
 For a self-hosted past.dev, pass your deployment's URL as the third argument of `/pastdotdev:connect`. Use

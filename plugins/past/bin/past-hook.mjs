@@ -26,9 +26,19 @@ const DEFAULT_IDLE_MINUTES = 720; // 12 hours
 // minutes nearly every sitting would be one exchange, so a smaller value is read as five.
 const DEFAULT_SITTING_MINUTES = 30;
 const MIN_SITTING_MINUTES = 5;
+// A sitting is also closed where it holds this much prose. An agent that runs for hours without a
+// pause never goes quiet, so its session was one sitting, and sent again at every compaction as it
+// grew it was a new paid revision of the whole every few minutes. The cut falls between two of the
+// agent's turns or before the developer's next prompt, never between a prompt and its first answer.
+const DEFAULT_SITTING_KILOBYTES = 50;
+const MIN_SITTING_KILOBYTES = 10;
+// At a compaction the sitting still open is sent again only when the session's last send is older
+// than this. The transcript on disk loses nothing at a compaction, so the open sitting can wait for
+// the session to end or go idle; the hour bounds what a crash in between could lose.
+const COMPACTION_RESEND_MS = 60 * 60000;
 const DEFAULT_API_URL = 'https://api.past.dev';
 const MARKER = '=== past · recalled from memory ===';
-const VERSION = '0.2.0';
+const VERSION = '0.4.0';
 
 // ---------------------------------------------------------------------------------- Claude Code
 
@@ -104,6 +114,8 @@ function loadConfig() {
     idleMinutes: Number(file.idleMinutes) > 0 ? Number(file.idleMinutes) : DEFAULT_IDLE_MINUTES,
     sittingMinutes: Number(file.sittingMinutes) > 0
       ? Math.max(MIN_SITTING_MINUTES, Number(file.sittingMinutes)) : DEFAULT_SITTING_MINUTES,
+    sittingKilobytes: Number(file.sittingKilobytes) > 0
+      ? Math.max(MIN_SITTING_KILOBYTES, Number(file.sittingKilobytes)) : DEFAULT_SITTING_KILOBYTES,
     // An audience slug from the console; empty means the whole project sees what is sent.
     audience: typeof file.audience === 'string' ? file.audience.trim() : '',
   };
@@ -324,7 +336,9 @@ function readTranscript(path) {
     if (!firstAt && entry.timestamp) firstAt = entry.timestamp;
     if (entry.gitBranch) branch = entry.gitBranch;
     if (entry.cwd) project = basename(entry.cwd);
-    turns.push({ role: entry.type, at: entry.timestamp || '', text: text.trim(), quiet: silence.take() });
+    // Each turn keeps the branch current at it: a sitting is rendered with its first turn's, while
+    // the session as a whole keeps the last, so a session that never switched renders as it did.
+    turns.push({ role: entry.type, at: entry.timestamp || '', text: text.trim(), quiet: silence.take(), branch });
   }
 
   if (!turns.length) return null;
@@ -371,17 +385,35 @@ function silenceMeter() {
 // for `sittingMinutes`, whoever speaks: a resumed session, or a permission granted the next
 // morning, can start with the agent rather than the person. Each sitting is a data point timed at
 // its own first turn. A memory takes the time of the data point it was drawn from, so one said on
-// the third day of a session that ran for three days is dated that day, not the first. A prompt is
-// never parted from its answer while the agent works on it. A session only grows at its end, so a
+// the third day of a session that ran for three days is dated that day, not the first. A new
+// sitting also starts once the one so far holds `sittingKilobytes` of prose, so a session that
+// never goes quiet is cut all the same; that cut waits for the agent to have answered, so a prompt
+// is never parted from its first answer, and falls between two of the agent's turns where it
+// works on without the person. Each sitting is placed on the branch current at its first turn,
+// where the transcript records one per turn, and the whole session keeps its last: a switch later
+// in the session then changes no sitting already closed. A session only grows at its end, so a
 // sitting never changes once the next one has begun, and a session that resumes sends its last
 // sitting again, not the whole.
-function sittingsOf(parsed, minutes) {
+function sittingsOf(parsed, minutes, kilobytes) {
   const sittings = [];
+  let held = 0;
+  let previous = null;
   for (const turn of parsed.turns) {
-    if (!sittings.length || (turn.at && turn.quiet >= minutes * 60000)) {
-      sittings.push({ ...parsed, turns: [], firstAt: sittings.length ? turn.at : parsed.firstAt });
+    const quiet = turn.quiet >= minutes * 60000;
+    // Measured on the turns' own text, so the cut moves with neither the heading nor the redaction.
+    const full = kilobytes > 0 && held >= kilobytes * 1024 && previous !== null && previous.role !== 'user';
+    if (!sittings.length || (turn.at && (quiet || full))) {
+      sittings.push({
+        ...parsed,
+        turns: [],
+        firstAt: sittings.length ? turn.at : parsed.firstAt,
+        branch: turn.branch || parsed.branch,
+      });
+      held = 0;
     }
     sittings[sittings.length - 1].turns.push(turn);
+    held += Buffer.byteLength(turn.text);
+    previous = turn;
   }
   return sittings;
 }
@@ -398,19 +430,22 @@ const hashOf = (text) => createHash('sha256').update(text).digest('hex');
  * state.json knows a sent session by the hash of its whole rendering (`hash`), which is what still
  * recognises one sent whole before sittings existed, and by one hash per sitting (`sittings`). A
  * session sent whole that grew since has no sitting hashes, so all of its sittings go. A session
- * keeps the sitting length it was first sent with (`sittingMinutes`): a new value in the config
- * applies to the sessions sent after it, and the boundaries of one already in past.dev never move.
+ * keeps the sitting length and size it was first sent with (`sittingMinutes`, `sittingKilobytes`):
+ * a new value in the config applies to the sessions sent after it, and the boundaries of one
+ * already in past.dev never move. One sent in sittings before the size existed keeps no size at all.
  */
 function planSend(parsed, context, sent, config) {
-  const minutes = (sent && sent.sittingMinutes) || config.sittingMinutes;
-  const sittings = sittingsOf(parsed, minutes).map((sitting, index) => {
+  const pinned = Boolean(sent && sent.sittingMinutes);
+  const minutes = pinned ? sent.sittingMinutes : config.sittingMinutes;
+  const kilobytes = pinned ? (Number(sent.sittingKilobytes) || 0) : config.sittingKilobytes;
+  const sittings = sittingsOf(parsed, minutes, kilobytes).map((sitting, index) => {
     const content = renderTranscript(sitting, context);
     return { index, sitting, content, hash: hashOf(content), bytes: Buffer.byteLength(content) };
   });
   const whole = hashOf(renderTranscript(parsed, context));
-  if (sent && sent.hash === whole) return { whole, minutes, sittings, changed: [] };
   const known = sent && Array.isArray(sent.sittings) ? sent.sittings : [];
-  return { whole, minutes, sittings, changed: sittings.filter((part) => known[part.index] !== part.hash) };
+  if (sent && sent.hash === whole) return { whole, minutes, kilobytes, sittings, known, changed: [] };
+  return { whole, minutes, kilobytes, sittings, known, changed: sittings.filter((part) => known[part.index] !== part.hash) };
 }
 
 // Which project, branch and directory a session belongs to: where the hook or the command ran,
@@ -711,7 +746,7 @@ function modeMcp() {
   return new Promise((done) => lines.on('close', () => Promise.all([...inflight]).then(done)));
 }
 
-async function ingestSession(config, state, sessionId, transcriptPath, context, {stillRunning = false} = {}) {
+async function ingestSession(config, state, sessionId, transcriptPath, context, {stillRunning = false, compacting = false} = {}) {
   if (!config.ingest || !config.apiKey) return { skipped: 'not configured' };
   const parsed = readTranscript(transcriptPath);
   const { sessions, pending } = book(state);
@@ -722,39 +757,51 @@ async function ingestSession(config, state, sessionId, transcriptPath, context, 
     return { skipped: 'nothing to send' };
   }
 
-  const plan = planSend(parsed, context, sessions[sessionId], config);
+  const before = sessions[sessionId];
+  const plan = planSend(parsed, context, before, config);
+  // A compaction sends the sittings that closed since the last send, once each, and holds the one
+  // still open unless the session's last send is an hour old: that sitting grows at every turn,
+  // and sent at every compaction it was a new paid revision of itself every few minutes. Its turns
+  // are in the file whatever the context loses, and go when the session ends or goes idle.
+  const last = plan.sittings[plan.sittings.length - 1];
+  const held = compacting && plan.changed.includes(last) && before && before.sentAt
+    && Date.now() - Date.parse(before.sentAt) < COMPACTION_RESEND_MS ? last : null;
+  const parts = held ? plan.changed.filter((part) => part !== held) : plan.changed;
   // The server charges nothing for an unchanged re-send, but the call still spends a request
   // from the key's per-minute budget. The hashes skip it, and they live here on purpose.
-  if (!plan.changed.length) {
+  if (!parts.length) {
     // Unchanged still closes the session out. Without this it stays pending, and every later
     // SessionStart re-reads and re-hashes a transcript that is already in past.dev.
     if (!stillRunning && pending[sessionId]) updateState((fresh) => { delete book(fresh).pending[sessionId]; }, state);
-    return { skipped: 'unchanged' };
+    return { skipped: held ? 'held' : 'unchanged' };
   }
 
   const place = placeOf(parsed, context);
-  const label = `${AGENT} · ${place.project}${place.branch ? ` · ${place.branch}` : ''}`;
   // One call for every sitting that changed, so a session spends one request however long it ran.
+  // Each sitting is labelled with its own branch, the one its content is rendered with.
   const result = await api(config, '/api/v1/ingest/batch', {
-    items: plan.changed.map((part) => ({
-      id: sittingId(sessionId, part.index),
-      content: part.content,
-      label,
-      timestamp: part.sitting.firstAt,
-      identity: config.identity || undefined,
-      audience: config.audience && config.audience !== 'project' ? config.audience : undefined,
-      metadata: {
-        source: SOURCE,
-        client: SOURCE,
-        conversationId: sessionId,
-        sessionId,
-        project: place.project,
-        cwd: place.cwd,
-        gitBranch: place.branch || '',
-        sitting: part.index + 1,
-        turns: part.sitting.turns.length,
-      },
-    })),
+    items: parts.map((part) => {
+      const branch = placeOf(part.sitting, context).branch;
+      return {
+        id: sittingId(sessionId, part.index),
+        content: part.content,
+        label: `${AGENT} · ${place.project}${branch ? ` · ${branch}` : ''}`,
+        timestamp: part.sitting.firstAt,
+        identity: config.identity || undefined,
+        audience: config.audience && config.audience !== 'project' ? config.audience : undefined,
+        metadata: {
+          source: SOURCE,
+          client: SOURCE,
+          conversationId: sessionId,
+          sessionId,
+          project: place.project,
+          cwd: place.cwd,
+          gitBranch: branch || '',
+          sitting: part.index + 1,
+          turns: part.sitting.turns.length,
+        },
+      };
+    }),
   }, 30000);
 
   if (!result || result.error) {
@@ -765,10 +812,15 @@ async function ingestSession(config, state, sessionId, transcriptPath, context, 
     updateState((fresh) => { book(fresh).lastError = lastError; }, state);
     return { error: result ? result.error : 'unreachable', code };
   }
+  // A held sitting keeps the hash it was last sent with, or none, so it goes at the next send, and
+  // the whole hash is written only once the whole session is in past.dev.
+  const hashes = plan.sittings.map((part) => part.hash);
+  if (held) { if (plan.known[held.index]) hashes[held.index] = plan.known[held.index]; else hashes.pop(); }
   const sent = {
-    hash: plan.whole,
-    sittings: plan.sittings.map((part) => part.hash),
+    hash: held ? before.hash : plan.whole,
+    sittings: hashes,
     sittingMinutes: plan.minutes,
+    sittingKilobytes: plan.kilobytes,
     sentAt: new Date().toISOString(),
     turns: parsed.turns.length,
   };
@@ -783,9 +835,10 @@ async function ingestSession(config, state, sessionId, transcriptPath, context, 
     ok: true,
     turns: parsed.turns.length,
     sittings: plan.sittings.length,
-    sent: plan.changed.length,
-    bytes: plan.changed.reduce((sum, part) => sum + part.bytes, 0),
-    credits: creditsOf(plan.changed),
+    sent: parts.length,
+    held: held ? 1 : 0,
+    bytes: parts.reduce((sum, part) => sum + part.bytes, 0),
+    credits: creditsOf(parts),
   };
 }
 
@@ -902,9 +955,12 @@ function recentPrompts(transcriptPath) {
 
 /**
  * Compaction is the one moment the context really does reset: everything before the boundary
- * becomes a lossy summary. past.dev holds the prose, so the session is flushed here — durable before
- * the detail goes, and recallable by the SessionStart that fires straight after with source
- * `compact`. Claude Code ignores this hook's output, so it writes and says nothing.
+ * becomes a lossy summary, while the transcript on disk keeps every turn. So the send here serves
+ * the SessionStart that fires straight after with source `compact`, and a crash before the
+ * session's own send, at a bounded price: the sittings that closed since the last send go, once
+ * each, and the one still open goes at most once an hour (`COMPACTION_RESEND_MS`); it stays in the
+ * file, and goes when the session ends or goes idle. Claude Code ignores this hook's output, so it
+ * writes and says nothing.
  */
 async function modePreCompact(config) {
   const input = await readStdin();
@@ -920,7 +976,7 @@ async function modePreCompact(config) {
     input.session_id,
     transcript,
     {project: basename(cwd), cwd, branch: ''},
-    {stillRunning: true},
+    {stillRunning: true, compacting: true},
   );
 }
 
@@ -959,8 +1015,10 @@ function clearActivity(sessionId) { try { unlinkSync(activityPath(sessionId)); }
 // Bumped whenever the waiter's logic changes: a waiter started by an older version is replaced,
 // because it is a long-lived process still running the code it was started with. 4: sessions are
 // sent in sittings, and a waiter of 3 would send an open session whole. 5: sittings are cut where
-// the transcript went quiet, for as long as the config says.
-const WAITER_VERSION = 5;
+// the transcript went quiet, for as long as the config says. 6: sittings are also cut by size, and
+// a waiter of 5 would cut a session the hooks already sent by size along other lines, and send its
+// sittings again under shifted ids.
+const WAITER_VERSION = 6;
 // The waiter never sleeps longer than this in one go. A timer does not count the time the machine
 // is asleep, so one long timer set for "in twelve hours" fires hours late after a night with the
 // lid closed. Short slices checked against the wall clock send within a minute of waking instead.
@@ -1340,7 +1398,8 @@ async function modeStatus(config, argv) {
     `Recall     ${config.recall && config.identity ? 'on' : 'off'}`,
     `Ingest     ${config.ingest && config.apiKey ? 'on' : 'off'}`,
     `Audience   ${config.audience && config.audience !== 'project' ? config.audience : 'whole project'}`,
-    `Sittings   a new one after ${config.sittingMinutes} min of quiet (sittingMinutes; a session keeps the length it was first sent with)`,
+    `Sittings   a new one after ${config.sittingMinutes} min of quiet or ${config.sittingKilobytes} KB of prose ` +
+      '(sittingMinutes, sittingKilobytes; a session keeps the values it was first sent with)',
     `Sessions   ${sent} sent · ${open.length} open` +
       (unsent ? ` (${unsent} not sent yet)` : ''),
   ];
