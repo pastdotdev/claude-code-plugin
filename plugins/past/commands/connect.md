@@ -43,5 +43,6 @@ organization's management key (`past_mk_…`). The identity is
 the email or id every memory is attributed to; recall stays off without one. The API URL is only
 for a self-hosted or staging deployment.
 
-After it succeeds, tell them two things: new sessions are read from now on, and `/pastdotdev:backfill`
-sends the history already on this machine.
+After it succeeds, tell them two things: sessions are read from their next prompt on, so what they
+typed before connecting stays on this machine, and `/pastdotdev:backfill` sends the sessions from
+before the plugin was installed.
