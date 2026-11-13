@@ -315,6 +315,8 @@ function readTranscript(path) {
   let firstAt = null;
   let branch = '';
   let project = '';
+  let model = '';
+  let effort = '';
   let raw = '';
   try { raw = readFileSync(path, 'utf8'); } catch { return null; }
   const silence = silenceMeter();
@@ -331,6 +333,15 @@ function readTranscript(path) {
     // user turn. Neither is the conversation.
     if (entry.isSidechain || entry.isMeta || entry.toolUseResult) continue;
 
+    // Claude Code writes, on each of the agent's entries, the model that wrote it and the effort it
+    // ran at. Each turn keeps the latest, for the sitting's metadata; a message Claude Code made up
+    // itself names no model (`<synthetic>`).
+    if (entry.type === 'assistant') {
+      const wrote = entry.message && entry.message.model;
+      if (typeof wrote === 'string' && wrote && !wrote.startsWith('<')) model = wrote.slice(0, 100);
+      if (typeof entry.effort === 'string' && entry.effort) effort = entry.effort.slice(0, 40);
+    }
+
     const text = textOf(entry.message && entry.message.content);
     if (!text || text.trim().length < 2 || isSynthetic(text)) continue;
 
@@ -339,7 +350,7 @@ function readTranscript(path) {
     if (entry.cwd) project = basename(entry.cwd);
     // Each turn keeps the branch current at it: a sitting is rendered with its first turn's, while
     // the session as a whole keeps the last, so a session that never switched renders as it did.
-    turns.push({ role: entry.type, at: entry.timestamp || '', text: text.trim(), quiet: silence.take(), branch });
+    turns.push({ role: entry.type, at: entry.timestamp || '', text: text.trim(), quiet: silence.take(), branch, model, effort });
   }
 
   if (!turns.length) return null;
@@ -423,6 +434,17 @@ function sittingsOf(parsed, minutes, kilobytes, spans) {
     previous = turn;
   }
   return sittings;
+}
+
+// The model a sitting ran on and its reasoning effort, as its last turn has them: what Claude Code was
+// set to when the sitting was last sent. Neither is part of the rendered content, so they change no
+// hash, and a transcript that names none adds nothing to the request.
+function ranOn(sitting) {
+  const last = sitting.turns[sitting.turns.length - 1] || {};
+  const ran = {};
+  if (last.model) ran.model = last.model;
+  if (last.effort) ran.effort = last.effort;
+  return ran;
 }
 
 /** The first sitting keeps the id a whole session had, so a session first sent whole is replaced, not doubled. */
@@ -851,6 +873,7 @@ async function ingestSession(config, state, sessionId, transcriptPath, context, 
           gitBranch: branch || '',
           sitting: part.index + 1,
           turns: part.sitting.turns.length,
+          ...ranOn(part.sitting),
         },
       };
     }),

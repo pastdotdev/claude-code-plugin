@@ -89,7 +89,8 @@ past.dev on demand: ask what was decided about something, or whether it was trie
 ## What leaves your machine
 
 Your prompts and Claude's replies, with the names of the project's folder and its branch, the
-session's id and the identity you connected with. The folder's path stays on your machine. Recall
+session's id, the model Claude ran on with its effort level, and the identity you connected with.
+The folder's path stays on your machine. Recall
 sends queries: one when a session starts, the first 1,000 characters of each prompt, and the
 questions Claude asks `past_recall`. Nothing else.
 

@@ -241,8 +241,8 @@ cannot read the conversation and can only be recalled from.
 
 - `POST /api/v1/ingest/batch` — one item per sitting. `id` gives replacement, `timestamp` dates
   every memory drawn from the item, `label` names the session, `metadata` carries
-  `conversationId`, `sessionId`, `project`, `gitBranch`, `sitting`. A batch takes up to 1,000
-  items and 16 MB of content.
+  `conversationId`, `sessionId`, `project`, `gitBranch`, `sitting`, and `model` and `effort` where
+  the transcript names them. A batch takes up to 1,000 items and 16 MB of content.
 - `POST /api/v1/recall` — **`identity` is required**. Recall stays off until `/pastdotdev:connect`
   sets one. The response is one result per document in rank order; the hooks read each result's
   `content` and `occurredAt`, and the tool also its sources' `excerpts` and `metadata.localTime`
@@ -252,6 +252,10 @@ cannot read the conversation and can only be recalled from.
   with `GET /api/v1/audiences/{slug}` (404 when unknown); a later `audience-unknown` refusal is
   kept in `state.lastError` for `/pastdotdev:status`, like every failed send.
 - `UserPromptSubmit` gives the prompt as `prompt` on stdin.
+- Claude Code writes, on each of the agent's entries in a transcript, the model that wrote it
+  (`message.model`) and the effort it ran at (`effort`). It documents neither field, so the script
+  takes a string where it finds one and otherwise sends nothing. A sitting carries what its last
+  turn ran on; neither is rendered, so neither changes a hash (rule 10).
 - Claude Code gives a hook `session_id`, `transcript_path`, `cwd` and `hook_event_name`, and
   takes `hookSpecificOutput.additionalContext` at session start and on a prompt.
 - A project API key (`past_sk_…`) names its own project. The plugin never sends a project id.
