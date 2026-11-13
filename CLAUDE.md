@@ -203,6 +203,20 @@ Use `updateState` for every change. Keep transcript hashes and pending sessions 
     set by measurement: change them with a measurement. The block before a prompt names the tool in
     one line, which is how the model learns to call it; the line rides inside a block the script
     already drops from what it sends (rule 13), so it changes nothing that travels.
+16. **A sitting is sent with the connection it was typed under.** `state.json` keeps, per session,
+    the connections its prompts were typed under (`connections`: a fingerprint of the key and the
+    address, empty while the machine has no key, each with the time it began; the first covers the
+    session from its start). Every hook of a session records a change (`noteConnection`), and
+    `connect` does for the sessions still open. A prompt typed under another connection than its
+    sitting's starts a new sitting, and a sitting is sent only while its connection is the one in
+    force, whichever way the send starts (a hook, the waiter, `ingest`, `backfill`); `cut` does not
+    print the others. So what a person typed before connecting, or under another project's key,
+    stays on the machine. A session the hooks kept no record of, one from before the plugin was
+    installed or before 0.4.1, names no connection: it is cut and sent as it was, so nothing
+    already in past.dev moves, and `backfill` still sends the history. A sitting kept back holds its
+    last hash in `sittings`, or `null`, and the session's whole hash is written only once every
+    sitting is in past.dev. The folder's path is never sent: `metadata.project` is the folder's
+    name. `WAITER_VERSION` went to 7 with it.
 
 ## Beside other past.dev plugins
 
@@ -227,8 +241,8 @@ cannot read the conversation and can only be recalled from.
 
 - `POST /api/v1/ingest/batch` — one item per sitting. `id` gives replacement, `timestamp` dates
   every memory drawn from the item, `label` names the session, `metadata` carries
-  `conversationId`, `sessionId`, `project`, `gitBranch`, `sitting`. A batch takes up to 1,000
-  items and 16 MB of content.
+  `conversationId`, `sessionId`, `project`, `gitBranch`, `sitting`, and `model` and `effort` where
+  the transcript names them. A batch takes up to 1,000 items and 16 MB of content.
 - `POST /api/v1/recall` — **`identity` is required**. Recall stays off until `/pastdotdev:connect`
   sets one. The response is one result per document in rank order; the hooks read each result's
   `content` and `occurredAt`, and the tool also its sources' `excerpts` and `metadata.localTime`
@@ -238,6 +252,10 @@ cannot read the conversation and can only be recalled from.
   with `GET /api/v1/audiences/{slug}` (404 when unknown); a later `audience-unknown` refusal is
   kept in `state.lastError` for `/pastdotdev:status`, like every failed send.
 - `UserPromptSubmit` gives the prompt as `prompt` on stdin.
+- Claude Code writes, on each of the agent's entries in a transcript, the model that wrote it
+  (`message.model`) and the effort it ran at (`effort`). It documents neither field, so the script
+  takes a string where it finds one and otherwise sends nothing. A sitting carries what its last
+  turn ran on; neither is rendered, so neither changes a hash (rule 10).
 - Claude Code gives a hook `session_id`, `transcript_path`, `cwd` and `hook_event_name`, and
   takes `hookSpecificOutput.additionalContext` at session start and on a prompt.
 - A project API key (`past_sk_…`) names its own project. The plugin never sends a project id.
@@ -277,3 +295,7 @@ throwaway `CLAUDE_CONFIG_DIR` and see `claude mcp list` report `plugin:pastdotde
 **A change to the script is checked against what it sent before.** Run the old script and the new
 one over the same transcripts, each in a throwaway home with its own stand-in, and compare what each
 mode prints, what each request carries and what `state.json` keeps, byte for byte (rule 10).
+
+For rule 16, run the hooks in a throwaway home with no key, then `connect`, then add a prompt to the
+transcript and run the prompt hook and `flush`: one sitting goes, the one after connecting. Do the
+same with a second key in place of no key, and check the key each request carries.

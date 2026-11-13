@@ -53,8 +53,9 @@ You need Claude Code and Node 16 or later.
 
 4. **Check it.** `/pastdotdev:status` shows the project it talks to and what it has sent.
 
-New sessions are read from then on. `/pastdotdev:backfill` lists the sessions already on this machine,
-estimates what sending them costs, and sends them when you confirm.
+Sessions are read from your next prompt on: what you typed before connecting stays on your machine.
+`/pastdotdev:backfill` lists the sessions from before the plugin was installed, estimates what
+sending them costs, and sends them when you confirm.
 
 To keep the key out of the conversation, use `/plugin configure pastdotdev@pastdotdev` in the terminal CLI
 instead of step 3: a form that masks the key and keeps it in your system's credential store.
@@ -87,7 +88,16 @@ past.dev on demand: ask what was decided about something, or whether it was trie
 
 ## What leaves your machine
 
-Your prompts, Claude's replies, and the project and branch names. Nothing else.
+Your prompts and Claude's replies, with the names of the project's folder and its branch, the
+session's id, the model Claude ran on with its effort level, and the identity you connected with.
+The folder's path stays on your machine. Recall
+sends queries: one when a session starts, the first 1,000 characters of each prompt, and the
+questions Claude asks `past_recall`. Nothing else.
+
+What you type is sent with the key it was typed under, and with no other. Nothing typed before you
+connect is sent, and what was typed under one project's key never goes to another project: a
+session goes on, in a new sitting, from the prompt after you connect or change keys. Sessions from
+before the plugin was installed are your history, sent only when you run `/pastdotdev:backfill`.
 
 Never sent: tool calls and their results, file contents, diffs, command output, subagent threads,
 and anything injected into the conversation rather than typed by a person. Strings that look like
