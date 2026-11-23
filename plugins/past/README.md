@@ -1,6 +1,7 @@
 # past.dev for Claude Code
 
-Your Claude Code sessions become memory, and every session opens already briefed.
+One memory for every teammate and every agent on a project. Your Claude Code sessions go in, and each prompt
+gets what was decided before, with dated sources.
 
 ## Install
 

@@ -1,6 +1,7 @@
 # past.dev for Claude Code
 
-Your Claude Code sessions become memory, and every session opens already briefed.
+One memory for every teammate and every agent on a project. Your Claude Code sessions go in, and each prompt
+gets what was decided before, with dated sources.
 
 [past.dev](https://past.dev) is memory for AI agents. This plugin connects Claude Code to a past.dev
 project: what you and Claude say to each other is read into memory as you work, and what matters

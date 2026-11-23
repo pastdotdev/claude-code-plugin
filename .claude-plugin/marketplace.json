@@ -9,8 +9,8 @@
     {
       "name": "pastdotdev",
       "source": "./plugins/past",
-      "description": "Your Claude Code sessions become memory, and every session starts briefed.",
-      "version": "0.4.1",
+      "description": "One memory for every teammate and every agent on a project. Your Claude Code sessions go in, and each prompt gets what was decided before, with dated sources.",
+      "version": "0.4.2",
       "author": {
         "name": "past.dev",
         "url": "https://past.dev"

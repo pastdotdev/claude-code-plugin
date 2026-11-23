@@ -259,6 +259,13 @@ cannot read the conversation and can only be recalled from.
 - Claude Code gives a hook `session_id`, `transcript_path`, `cwd` and `hook_event_name`, and
   takes `hookSpecificOutput.additionalContext` at session start and on a prompt.
 - A project API key (`past_sk_…`) names its own project. The plugin never sends a project id.
+- `engines` in `plugin.json` names the Claude Code versions the plugin installs on, `>=2.1.76`.
+  Claude Code 2.1.323 and later install, update and load a plugin from a git marketplace only
+  inside the range; 2.1.76 to 2.1.322 ignore the field; 2.1.75 and older refuse the manifest, as
+  they did before the field for `displayName`, `icon` and the listing links. Raise the range in
+  the release that first needs a newer Claude Code, and prove it both ways: an install inside the
+  range, and a refusal (`engine_range`) from a git marketplace outside it. A plugin read from a
+  local folder loads outside its range, so a folder install proves nothing here.
 - Claude Code starts a plugin's MCP server from the `mcpServers` file its manifest names, expands
   `${CLAUDE_PLUGIN_ROOT}` in its arguments, and names its tool `mcp__plugin_pastdotdev_past__past_recall`.
 
