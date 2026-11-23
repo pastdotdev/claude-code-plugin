@@ -313,6 +313,9 @@ cannot read the conversation and can only be recalled from.
   the release that first needs a newer Claude Code, and prove it both ways: an install inside the
   range, and a refusal (`engine_range`) from a git marketplace outside it. A plugin read from a
   local folder loads outside its range, so a folder install proves nothing here.
+- `VERSION` in the script is the version in `plugin.json` and in the marketplace entry, in every
+  release, one of words alone too: the `User-Agent` and the recall tool's server name it. 0.4.2
+  left the script at 0.4.1; 0.5.0 names itself.
 - Claude Code starts a plugin's MCP server from the `mcpServers` file its manifest names, expands
   `${CLAUDE_PLUGIN_ROOT}` in its arguments, and names its tool `mcp__plugin_pastdotdev_past__past_recall`.
 
