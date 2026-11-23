@@ -69,7 +69,16 @@ has just lost.
 
 ## What leaves this machine
 
-The prompts, the replies, and the project and branch names. That is all.
+The prompts, the replies, the project and branch names, and the model each sitting ran on with
+its effort level.
+
+Beside them, while `modelUsage` is on: the token counts Claude Code recorded for each sitting
+(input, cached input, cache writes and output for each model, subagents included), how the model
+is paid for (by the token, through a cloud provider or with a subscription) and whether Claude
+Code's own memory is on. past.dev uses them to show what it saved on the project's Dashboard. How
+the model is paid for is read from whether an API key or a cloud provider is set, never from a
+key's value. Once, after the update to 0.5.0, the token counts of the sittings already sent go
+too: their ids and the counts, with no text. That is all.
 
 Not sent: tool results, file contents, diffs, command output, subagent threads, and anything
 the agent injected rather than a person typing it. Strings that look like keys, tokens or
@@ -118,6 +127,7 @@ something was tried before, and it looks.
   "idleMinutes": 720,
   "sittingMinutes": 30,
   "sittingKilobytes": 50,
+  "modelUsage": true,
   "deny": ["/Users/you/clients/acme"]
 }
 ```
@@ -132,6 +142,8 @@ something was tried before, and it looks.
 - `sittingKilobytes` is how much prose a sitting holds before the next turn starts a new one (50
   by default, 10 at least), the cut waiting for the agent's reply. A session keeps the size it was
   first sent with.
+- `modelUsage: false` stops the token counts, how the model is paid for and whether Claude Code's
+  own memory is on from being sent. past.dev then has less to work out what it saved from.
 - `deny` holds path fragments. A session whose working directory matches one is ignored
   completely — nothing is read and nothing is sent.
 - `PAST_API_KEY`, `PAST_IDENTITY` and `PAST_API_URL` override the file.

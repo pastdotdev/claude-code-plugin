@@ -93,7 +93,17 @@ Your prompts and Claude's replies, with the names of the project's folder and it
 session's id, the model Claude ran on with its effort level, and the identity you connected with.
 The folder's path stays on your machine. Recall
 sends queries: one when a session starts, the first 1,000 characters of each prompt, and the
-questions Claude asks `past_recall`. Nothing else.
+questions Claude asks `past_recall`.
+
+Beside each sitting and each recall go a few facts about the model, which past.dev uses to show
+what it saved you on the project's Dashboard: the model's name, the token counts Claude Code
+recorded for the sitting (input, cached input, cache writes and output for each model, subagents
+included), how you pay for the model (by the token, through a cloud provider or with a
+subscription) and whether Claude Code's own memory is on. How you pay is read from whether an API
+key or a cloud provider is set, never from a key's value. Once, after the update to 0.5.0, the
+plugin also sends the token counts of the sittings it had already sent: their ids and the counts,
+with no text. `"modelUsage": false` in `~/.past/config.json` sends none of this. Nothing else
+leaves.
 
 What you type is sent with the key it was typed under, and with no other. Nothing typed before you
 connect is sent, and what was typed under one project's key never goes to another project: a
@@ -132,8 +142,9 @@ slug from the console's **Audiences** page. `/pastdotdev:connect --audience proj
 `~/.past/config.json` holds the connection and a few switches: `recall` and `ingest` turn either
 half off, `idleMinutes` (720) is how long a session stays quiet before it is sent,
 `sittingMinutes` (30) is how long a pause starts a new sitting, `sittingKilobytes` (50) how much
-prose does, and `deny` lists paths whose sessions are never read. `PAST_API_KEY`, `PAST_IDENTITY`
-and `PAST_API_URL` override the file.
+prose does, `modelUsage` sends the model's token counts and how it is paid for, and `deny` lists
+paths whose sessions are never read. `PAST_API_KEY`, `PAST_IDENTITY` and `PAST_API_URL` override
+the file.
 Each setting is described in the [plugin's README](plugins/past/README.md#configuration).
 
 For a self-hosted past.dev, pass your deployment's URL as the third argument of `/pastdotdev:connect`. Use
