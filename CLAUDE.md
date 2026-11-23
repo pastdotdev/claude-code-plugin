@@ -22,12 +22,14 @@ Claude Code
   compaction      precompact   sends the sittings that closed; the one still open at most once an hour
   session end     end          hands the send to a detached process (flush)
   detached        idle         the waiter: sends once Claude Code's process is gone, or after idleMinutes
+  detached        counts       once: the token counts of the sittings already sent
               |
   ~/.past/config.json          the connection
   ~/.past/state.json           what was sent and what is open
   ~/.past/activity/            one file per open session
               |
   POST /api/v1/recall · POST /api/v1/ingest/batch · GET /api/v1/audiences/{slug}
+  PUT /api/v1/agent-tokens
 ```
 
 ```
@@ -217,6 +219,34 @@ Use `updateState` for every change. Keep transcript hashes and pending sessions 
     last hash in `sittings`, or `null`, and the session's whole hash is written only once every
     sitting is in past.dev. The folder's path is never sent: `metadata.project` is the folder's
     name. `WAITER_VERSION` went to 7 with it.
+17. **What a session cost travels beside it, never in it.** While `modelUsage` is on (the default),
+    a send carries each sitting's token counts in its item's `agent` object, and a send or a recall
+    carries three headers: `X-Past-Model`, `X-Past-Model-Billing` and `X-Past-Agent-Memory`.
+    past.dev works out from them what it saved. None of it is rendered, so no hash moves (rule 10),
+    and a sitting whose text has not changed is not sent again for its counts.
+    - The counts are the `usage` Claude Code writes on each of the agent's entries. It writes one
+      reply on several lines, each repeating the reply's usage, so a reply is counted once, by its
+      `message.id` (`noteReply`). A reply that only calls a tool counts, and so do the replies in
+      the session's `subagents` folder (`withSubagents`): a subagent often runs on a smaller model.
+      A reply belongs to the sitting that was open when it was written (`sittingTokens`).
+    - The model on a recall is the one that wrote the transcript's last reply, read from the end of
+      the file (`tailModel`), and before the first reply the one `SessionStart` named, kept on the
+      session's `pending` entry. The tool and `search` take the most recently written transcript
+      of their folder. A model nobody can name sends no header.
+    - How the model is paid for is read from whether a variable or a setting is there, never from
+      its value: the three `CLAUDE_CODE_USE_*` variables say a cloud provider, an API key or token
+      variable or an `apiKeyHelper` setting says by the token, and nothing says a subscription.
+      Claude Code's own memory is on unless `autoMemoryEnabled` is false in its settings (the
+      person's, then the folder's two, the later winning) or `CLAUDE_CODE_DISABLE_AUTO_MEMORY` is set.
+    - `counts` mode sends, once, the counts of the sittings already in past.dev whose transcript is
+      still here: ids and counts through `PUT /api/v1/agent-tokens`, with no content. It never goes
+      through ingest. A re-send carries the audience in force now, so it would move a sitting sent
+      under another one, and under another project's key it would be a new paid data point; the
+      route keeps counts for the data points the project holds and ignores every other id.
+      `SessionStart` detaches it while `state.counts` holds no `doneAt`. It asks with no items
+      first, and where the deployment has no such route it tries again a day later.
+    - `cut` and `status` say what travels beside the text, since that is where a person reads what
+      leaves. `WAITER_VERSION` went to 8 with it.
 
 ## Beside other past.dev plugins
 
@@ -243,6 +273,14 @@ cannot read the conversation and can only be recalled from.
   every memory drawn from the item, `label` names the session, `metadata` carries
   `conversationId`, `sessionId`, `project`, `gitBranch`, `sitting`, and `model` and `effort` where
   the transcript names them. A batch takes up to 1,000 items and 16 MB of content.
+- An ingest item takes an optional `agent` object beside `metadata`,
+  `{"tokens": {"<model id>": {"input", "cached_input", "cache_write", "cache_write_1h", "output"}}}`,
+  where `input` is the input not read from the cache and `cache_write_1h` is the part of
+  `cache_write` kept for an hour, which the provider prices higher. Ingest and recall read the three `X-Past-*` headers of rule
+  17. A deployment that knows neither ignores both.
+- `PUT /api/v1/agent-tokens` — `items` of `id` and `agent`, up to 1,000, with no content. It answers
+  how many it kept (`recorded`), how many ids the project does not hold (`unknown`) and how many
+  it could not read (`ignored`); a call with no items answers zeros.
 - `POST /api/v1/recall` — **`identity` is required**. Recall stays off until `/pastdotdev:connect`
   sets one. The response is one result per document in rank order; the hooks read each result's
   `content` and `occurredAt`, and the tool also its sources' `excerpts` and `metadata.localTime`
@@ -257,7 +295,16 @@ cannot read the conversation and can only be recalled from.
   takes a string where it finds one and otherwise sends nothing. A sitting carries what its last
   turn ran on; neither is rendered, so neither changes a hash (rule 10).
 - Claude Code gives a hook `session_id`, `transcript_path`, `cwd` and `hook_event_name`, and
-  takes `hookSpecificOutput.additionalContext` at session start and on a prompt.
+  takes `hookSpecificOutput.additionalContext` at session start and on a prompt. `SessionStart`
+  also carries `model`, which Claude Code can leave out (after `/clear`, on a restored session).
+- Claude Code writes, on each of the agent's entries, the reply's `message.id` and its
+  `message.usage`: `input_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens` and
+  `output_tokens`, the three kinds of input counted apart, and under `cache_creation` the part of
+  the cache writes kept for an hour (`ephemeral_1h_input_tokens`). A subagent's thread is a file of the same
+  shape in `<transcript without .jsonl>/subagents/`. Checked on 2.1.321; the script takes numbers
+  where it finds them and otherwise counts nothing.
+- Claude Code's own memory is the `autoMemoryEnabled` setting, on by default, and
+  `CLAUDE_CODE_DISABLE_AUTO_MEMORY` turns it off.
 - A project API key (`past_sk_…`) names its own project. The plugin never sends a project id.
 - `engines` in `plugin.json` names the Claude Code versions the plugin installs on, `>=2.1.76`.
   Claude Code 2.1.323 and later install, update and load a plugin from a git marketplace only
@@ -266,6 +313,9 @@ cannot read the conversation and can only be recalled from.
   the release that first needs a newer Claude Code, and prove it both ways: an install inside the
   range, and a refusal (`engine_range`) from a git marketplace outside it. A plugin read from a
   local folder loads outside its range, so a folder install proves nothing here.
+- `VERSION` in the script is the version in `plugin.json` and in the marketplace entry, in every
+  release, one of words alone too: the `User-Agent` and the recall tool's server name it. 0.4.2
+  left the script at 0.4.1; 0.5.0 names itself.
 - Claude Code starts a plugin's MCP server from the `mcpServers` file its manifest names, expands
   `${CLAUDE_PLUGIN_ROOT}` in its arguments, and names its tool `mcp__plugin_pastdotdev_past__past_recall`.
 
@@ -302,6 +352,13 @@ throwaway `CLAUDE_CONFIG_DIR` and see `claude mcp list` report `plugin:pastdotde
 **A change to the script is checked against what it sent before.** Run the old script and the new
 one over the same transcripts, each in a throwaway home with its own stand-in, and compare what each
 mode prints, what each request carries and what `state.json` keeps, byte for byte (rule 10).
+
+For rule 17, run a send in a throwaway home against the stand-in and read the `agent` object of each
+item and the three headers; then set `"modelUsage": false` and check that neither is there. For
+`counts`, link a few sent transcripts under the throwaway home's `.claude/projects/`, make the
+stand-in answer `PUT /api/v1/agent-tokens` with 404, then with 200, and run the mode twice each
+time: one empty call and nothing more on 404, one empty call and the items on 200, and nothing at
+all on the second run.
 
 For rule 16, run the hooks in a throwaway home with no key, then `connect`, then add a prompt to the
 transcript and run the prompt hook and `flush`: one sitting goes, the one after connecting. Do the

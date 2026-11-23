@@ -7,7 +7,7 @@
 // The one rule that governs every path: a hook must never break the session it runs in. Every
 // mode exits 0, prints valid JSON or nothing, and swallows its own failures.
 
-import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, statSync, chmodSync, unlinkSync, renameSync, rmdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, statSync, chmodSync, unlinkSync, renameSync, rmdirSync, openSync, readSync, closeSync, fstatSync } from 'node:fs';
 import { spawn, execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -38,7 +38,7 @@ const MIN_SITTING_KILOBYTES = 10;
 const COMPACTION_RESEND_MS = 60 * 60000;
 const DEFAULT_API_URL = 'https://api.past.dev';
 const MARKER = '=== past · recalled from memory ===';
-const VERSION = '0.4.1';
+const VERSION = '0.5.0';
 
 // ---------------------------------------------------------------------------------- Claude Code
 
@@ -118,6 +118,9 @@ function loadConfig() {
       ? Math.max(MIN_SITTING_KILOBYTES, Number(file.sittingKilobytes)) : DEFAULT_SITTING_KILOBYTES,
     // An audience slug from the console; empty means the whole project sees what is sent.
     audience: typeof file.audience === 'string' ? file.audience.trim() : '',
+    // The model a session ran on, its token counts, how it is paid and whether Claude Code's own
+    // memory is on travel beside what is sent, so past.dev can say what it saved. `false` sends none.
+    modelUsage: file.modelUsage !== false,
   };
 }
 
@@ -317,9 +320,11 @@ function readTranscript(path) {
   let project = '';
   let model = '';
   let effort = '';
+  let cwd = '';
   let raw = '';
   try { raw = readFileSync(path, 'utf8'); } catch { return null; }
   const silence = silenceMeter();
+  const replies = new Map();
 
   for (const line of raw.split('\n')) {
     if (!line) continue;
@@ -329,6 +334,9 @@ function readTranscript(path) {
     // Every entry of the conversation is activity, the ones that are not sent included. Other
     // kinds of line (a pull request's status, a setting) can be written while nobody is there.
     silence.seen(entry.timestamp);
+    // What a reply cost is counted whether or not its text is sent: one that only calls a tool, or
+    // one in a subagent's thread, is the session's spend like any other.
+    if (entry.type === 'assistant') noteReply(replies, entry);
     // A sidechain is a subagent's own thread, and a tool result is machine output wearing a
     // user turn. Neither is the conversation.
     if (entry.isSidechain || entry.isMeta || entry.toolUseResult) continue;
@@ -347,14 +355,14 @@ function readTranscript(path) {
 
     if (!firstAt && entry.timestamp) firstAt = entry.timestamp;
     if (entry.gitBranch) branch = entry.gitBranch;
-    if (entry.cwd) project = basename(entry.cwd);
+    if (entry.cwd) { project = basename(entry.cwd); cwd = entry.cwd; }
     // Each turn keeps the branch current at it: a sitting is rendered with its first turn's, while
     // the session as a whole keeps the last, so a session that never switched renders as it did.
     turns.push({ role: entry.type, at: entry.timestamp || '', text: text.trim(), quiet: silence.take(), branch, model, effort });
   }
 
   if (!turns.length) return null;
-  return { turns, firstAt: firstAt || new Date().toISOString(), branch, project };
+  return { turns, firstAt: firstAt || new Date().toISOString(), branch, project, cwd, replies };
 }
 
 // The conversation as prose, with each turn's own time kept in the text. Memory is drawn from one
@@ -533,6 +541,188 @@ function placeOf(parsed, context) {
   };
 }
 
+// ----------------------------------------------------------- what a session ran on, and its cost
+//
+// Beside what it sends, the plugin says which model the session ran on, what the model's provider
+// counted for each sitting, how the account pays for it and whether Claude Code's own memory is on.
+// past.dev works out from them what it saved. None of it is part of a sitting's content, so no hash
+// moves, and `"modelUsage": false` in the config sends none of it.
+
+/** A model id as a header can carry it: a `[1m]` suffix dropped, nothing with a space or a made-up name. */
+function modelId(value) {
+  if (typeof value !== 'string') return '';
+  const id = value.trim().replace(/\[[^\]]*\]$/, '');
+  return id && id.length <= 128 && !id.startsWith('<') && /^[\x21-\x7e]+$/.test(id) ? id : '';
+}
+
+/**
+ * Keeps what one reply of the model cost. Claude Code writes a reply on several lines of the
+ * transcript, one for each block of it, and every line repeats the reply's usage: a reply is
+ * counted once, by its message id, with the largest figure a line gives for each count.
+ */
+function noteReply(replies, entry) {
+  const message = entry.message;
+  const usage = message && message.usage;
+  const model = modelId(message && message.model);
+  if (!usage || typeof usage !== 'object' || !model) return;
+  const key = message.id || entry.requestId || entry.uuid;
+  if (!key) return;
+  const count = (value) => (Number.isFinite(value) && value > 0 ? Math.floor(value) : 0);
+  const held = replies.get(key) || { at: entry.timestamp || '', model, input: 0, cached: 0, written: 0, writtenHour: 0, output: 0 };
+  // Anthropic counts the three kinds of input apart, so `input_tokens` is already the input that
+  // was not read from the cache.
+  held.input = Math.max(held.input, count(usage.input_tokens));
+  held.cached = Math.max(held.cached, count(usage.cache_read_input_tokens));
+  held.written = Math.max(held.written, count(usage.cache_creation_input_tokens));
+  // Anthropic prices a cache write by how long it is kept, and says which part it keeps for an hour.
+  const kept = usage.cache_creation;
+  held.writtenHour = Math.max(held.writtenHour, count(kept && typeof kept === 'object' ? kept.ephemeral_1h_input_tokens : 0));
+  held.output = Math.max(held.output, count(usage.output_tokens));
+  replies.set(key, held);
+}
+
+/**
+ * A session's replies with its subagents' added. Claude Code keeps each subagent's thread in a file
+ * of its own, in a `subagents` folder named after the session; a subagent often runs on a smaller
+ * model, and what it cost is part of what the session cost.
+ */
+function withSubagents(parsed, path) {
+  if (!parsed || !path) return parsed;
+  const dir = join(path.replace(/\.jsonl$/, ''), 'subagents');
+  let files = [];
+  try { files = readdirSync(dir); } catch { return parsed; }
+  const replies = new Map(parsed.replies);
+  for (const file of files) {
+    if (!file.endsWith('.jsonl')) continue;
+    let raw = '';
+    try { raw = readFileSync(join(dir, file), 'utf8'); } catch { continue; }
+    for (const line of raw.split('\n')) {
+      if (!line) continue;
+      let entry;
+      try { entry = JSON.parse(line); } catch { continue; }
+      if (entry && entry.type === 'assistant') noteReply(replies, entry);
+    }
+  }
+  return { ...parsed, replies };
+}
+
+/**
+ * Each sitting's token counts by model: every reply written from the sitting's first turn until the
+ * next sitting's. A reply from before the first turn counts with the first sitting.
+ */
+function sittingTokens(sittings, replies) {
+  const starts = sittings.map((sitting) => Date.parse(sitting.firstAt));
+  const totals = sittings.map(() => ({}));
+  if (!sittings.length) return totals;
+  for (const reply of replies.values()) {
+    const at = Date.parse(reply.at);
+    let index = 0;
+    for (let i = 1; i < starts.length; i++) if (starts[i] <= at) index = i;
+    const counts = totals[index][reply.model] || { input: 0, cached_input: 0, cache_write: 0, cache_write_1h: 0, output: 0 };
+    counts.input += reply.input;
+    counts.cached_input += reply.cached;
+    counts.cache_write += reply.written;
+    // The part kept for an hour is part of what was written, never more.
+    counts.cache_write_1h += Math.min(reply.writtenHour, reply.written);
+    counts.output += reply.output;
+    totals[index][reply.model] = counts;
+  }
+  return totals;
+}
+
+const tokensIn = (counts) => counts.input + counts.cached_input + counts.cache_write + counts.output;
+
+/** The `agent` object of an ingest item: the sitting's counts for each model, or nothing where it has none. */
+function agentOf(totals) {
+  const models = Object.entries(totals || {})
+    .filter(([, counts]) => tokensIn(counts) > 0)
+    .sort((x, y) => tokensIn(y[1]) - tokensIn(x[1]))
+    .slice(0, 16);
+  if (!models.length) return undefined;
+  const tokens = {};
+  for (const [model, counts] of models) tokens[model] = counts;
+  return { tokens };
+}
+
+/** The model that wrote the last reply in a transcript, read from the end of the file alone. */
+function tailModel(path) {
+  if (!path) return '';
+  let handle;
+  try {
+    handle = openSync(path, 'r');
+    const size = fstatSync(handle).size;
+    // A line that holds a file's contents can be longer than the first span.
+    for (const span of [262144, 4194304]) {
+      const length = Math.min(size, span);
+      const buffer = Buffer.alloc(length);
+      readSync(handle, buffer, 0, length, size - length);
+      const lines = buffer.toString('utf8').split('\n');
+      for (let index = lines.length - 1; index >= 0; index--) {
+        if (!lines[index].includes('"assistant"')) continue;
+        let entry;
+        try { entry = JSON.parse(lines[index]); } catch { continue; }
+        if (!entry || entry.type !== 'assistant' || entry.isSidechain) continue;
+        const model = modelId(entry.message && entry.message.model);
+        if (model) return model;
+      }
+      if (length === size) break;
+    }
+  } catch { /* no model is said */ } finally {
+    if (handle !== undefined) { try { closeSync(handle); } catch { /* already closed */ } }
+  }
+  return '';
+}
+
+/** The model of the session being written in a folder: its most recently written transcript's. */
+function folderModel(cwd) {
+  const [latest] = listTranscripts(false, cwd).sort((x, y) => y.mtime - x.mtime);
+  return latest ? tailModel(latest.path) : '';
+}
+
+function claudeHome() { return process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude'); }
+
+/** Claude Code's settings for a folder, the person's first and the folder's own after, which win. */
+function claudeSettings(cwd) {
+  const files = [join(claudeHome(), 'settings.json')];
+  if (cwd) files.push(join(cwd, '.claude', 'settings.json'), join(cwd, '.claude', 'settings.local.json'));
+  return files.map((file) => readJson(file, null)).filter((settings) => settings && typeof settings === 'object');
+}
+
+const envOn = (name) => {
+  const value = (process.env[name] || '').trim().toLowerCase();
+  return Boolean(value) && value !== '0' && value !== 'false';
+};
+
+/**
+ * How the account pays for its model: through a cloud provider, by the token with an API key, or
+ * with a subscription. Read from whether a variable or a setting is there, never from its value.
+ */
+function billingOf(cwd) {
+  if (envOn('CLAUDE_CODE_USE_BEDROCK') || envOn('CLAUDE_CODE_USE_VERTEX') || envOn('CLAUDE_CODE_USE_FOUNDRY')) return 'cloud';
+  if (process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN) return 'api';
+  if (claudeSettings(cwd).some((settings) => Boolean(settings.apiKeyHelper))) return 'api';
+  return 'subscription';
+}
+
+/** Whether Claude Code's own memory is on: it is unless a setting or the environment turns it off. */
+function ownMemoryOf(cwd) {
+  if (envOn('CLAUDE_CODE_DISABLE_AUTO_MEMORY')) return 'off';
+  let enabled = true;
+  for (const settings of claudeSettings(cwd)) {
+    if (typeof settings.autoMemoryEnabled === 'boolean') enabled = settings.autoMemoryEnabled;
+  }
+  return enabled ? 'on' : 'off';
+}
+
+/** The headers that go beside a recall or a send: the model where one is known, and the two facts above. */
+function originOf(config, model, cwd) {
+  if (!config.modelUsage) return {};
+  const headers = { 'X-Past-Model-Billing': billingOf(cwd), 'X-Past-Agent-Memory': ownMemoryOf(cwd) };
+  const id = modelId(model);
+  if (id) headers['X-Past-Model'] = id;
+  return headers;
+}
+
 // ------------------------------------------------------------------------------ the memory API
 
 // Node 18 has fetch. Claude Code started from the Dock often finds an older Node first on its path,
@@ -605,7 +795,7 @@ async function checkCredits(config, operation, timeoutMs, force = false) {
   return !creditPause(config, operation);
 }
 
-async function api(config, path, body, timeoutMs, method = 'POST') {
+async function api(config, path, body, timeoutMs, method = 'POST', origin = {}) {
   if (!config.apiKey) return null;
   const operation = method === 'POST' && ['/api/v1/ingest', '/api/v1/ingest/batch'].includes(path) ? 'ingest'
     : method === 'POST' && path === '/api/v1/recall' ? 'recall' : null;
@@ -622,6 +812,7 @@ async function api(config, path, body, timeoutMs, method = 'POST') {
         'Authorization': `Bearer ${config.apiKey}`,
         'Content-Type': 'application/json',
         'User-Agent': `past-${SOURCE}/${VERSION}`,
+        ...origin,
       },
       body: body === null ? undefined : JSON.stringify(body),
       signal: control.signal,
@@ -651,7 +842,7 @@ async function api(config, path, body, timeoutMs, method = 'POST') {
   }
 }
 
-async function recall(config, query, limit, timeoutMs) {
+async function recall(config, query, limit, timeoutMs, origin) {
   if (!config.recall || !config.identity || !query) return [];
   const result = await api(config, '/api/v1/recall', {
     // A query leaves the machine exactly as the content does, so it is redacted exactly as the
@@ -660,7 +851,7 @@ async function recall(config, query, limit, timeoutMs) {
     identity: config.identity,
     limit,
     level: 'low',
-  }, timeoutMs);
+  }, timeoutMs, 'POST', origin);
   if (!result || result.error || !Array.isArray(result.results)) return [];
   // One result per document, already in rank order; its artifact and sources are context the
   // brief does not print.
@@ -766,7 +957,8 @@ async function recallTool(args) {
     identity: config.identity,
     limit: TOOL_LIMIT,
     maxTokens: TOOL_MAX_TOKENS,
-  }, TOOL_TIMEOUT_MS);
+    // The server is started in the session's folder, and the session it serves is the one being written.
+  }, TOOL_TIMEOUT_MS, 'POST', originOf(config, folderModel(process.cwd()), process.cwd()));
   if (!page) return { text: 'past.dev did not answer. Try again in a moment.', isError: true };
   if (page.error) return { text: `past.dev refused the recall (${page.error}).`, isError: true };
   return { text: renderPage(page) || 'Nothing in past.dev matches that yet.', isError: false };
@@ -852,6 +1044,11 @@ async function ingestSession(config, state, sessionId, transcriptPath, context, 
   }
 
   const place = placeOf(parsed, context);
+  // Beside each sitting, what its replies cost by model; beside the call, the model the session last
+  // ran on. Neither is in a sitting's content.
+  const counted = config.modelUsage
+    ? sittingTokens(plan.sittings.map((part) => part.sitting), withSubagents(parsed, transcriptPath).replies) : [];
+  const origin = originOf(config, parsed.turns[parsed.turns.length - 1].model, parsed.cwd);
   // One call for every sitting that changed, so a session spends one request however long it ran.
   // Each sitting is labelled with its own branch, the one its content is rendered with.
   const result = await api(config, '/api/v1/ingest/batch', {
@@ -875,9 +1072,10 @@ async function ingestSession(config, state, sessionId, transcriptPath, context, 
           turns: part.sitting.turns.length,
           ...ranOn(part.sitting),
         },
+        agent: agentOf(counted[part.index]),
       };
     }),
-  }, 30000);
+  }, 30000, 'POST', origin);
 
   if (!result || result.error) {
     // Hooks stay silent by design, so the failure is kept for /pastdotdev:status to report.
@@ -990,8 +1188,12 @@ async function modeBrief(config) {
   if (denied(config, cwd)) return;
 
   const transcript = input.transcript_path;
+  // Claude Code names the session's model here, not always; a session that resumes has one in its
+  // transcript. It is kept for the prompts that come before the first reply.
+  const model = modelId(input.model) || tailModel(transcript);
   if (input.session_id && transcript) {
     const entry = { transcript, cwd, project: basename(cwd) };
+    if (model) entry.model = model;
     updateState((fresh) => { book(fresh).pending[input.session_id] = entry; }, state);
   }
   noteConnection(config, input.session_id, state);
@@ -1002,6 +1204,7 @@ async function modeBrief(config) {
   // now as well would pay for it twice.
   updateState((fresh) => tidyPending(fresh, config, input.session_id), state);
   ensureWaiters();
+  if (countsDue(state, config)) detach('counts');
   for (const [id, pending] of Object.entries(book(state).pending)) {
     if (id === input.session_id || !idleFor(pending.transcript, config)) continue;
     await ingestSession(config, state, id, pending.transcript, {
@@ -1016,7 +1219,7 @@ async function modeBrief(config) {
   const project = `${basename(cwd)} recent decisions and context`;
   const query = source === 'compact' ? recentPrompts(transcript) || project : project;
 
-  const memories = await recall(config, query, 6, 8000);
+  const memories = await recall(config, query, 6, 8000, originOf(config, model, cwd));
   emit('SessionStart', renderRecall(memories, 2200));
 }
 
@@ -1064,12 +1267,15 @@ async function modePrompt(config) {
   const input = await readStdin();
   if (!ownEvent(input, 'UserPromptSubmit')) return;
   if (denied(config, input.cwd || '')) return;
-  noteConnection(config, input.session_id);
+  const state = loadState();
+  noteConnection(config, input.session_id, state);
   const prompt = input.prompt || '';
   // A short prompt ("yes", "go on") carries no query. Spending a recall on it wastes the budget
   // and returns noise.
   if (prompt.trim().length < 12 || isSynthetic(prompt)) return;
-  const memories = await recall(config, prompt, 10, 4000);
+  // The model that wrote the last reply; before the first one, the model the session started on.
+  const model = tailModel(input.transcript_path) || (book(state).pending[input.session_id] || {}).model;
+  const memories = await recall(config, prompt, 10, 4000, originOf(config, model, input.cwd || ''));
   emit('UserPromptSubmit', renderRecall(memories, 4000));
 }
 
@@ -1099,8 +1305,9 @@ function clearActivity(sessionId) { try { unlinkSync(activityPath(sessionId)); }
 // the transcript went quiet, for as long as the config says. 6: sittings are also cut by size, and
 // a waiter of 5 would cut a session the hooks already sent by size along other lines, and send its
 // sittings again under shifted ids. 7: a sitting is sent with the connection it was typed under, and
-// a waiter of 6 would send what was typed before connecting, or under another key.
-const WAITER_VERSION = 7;
+// a waiter of 6 would send what was typed before connecting, or under another key. 8: a sitting goes
+// with its token counts, and one a waiter of 7 sent would be in past.dev without them.
+const WAITER_VERSION = 8;
 // The waiter never sleeps longer than this in one go. A timer does not count the time the machine
 // is asleep, so one long timer set for "in twelve hours" fires hours late after a night with the
 // lid closed. Short slices checked against the wall clock send within a minute of waking instead.
@@ -1230,6 +1437,78 @@ async function modeFlush(config, argv) {
   await ingestSession(config, loadState(), sessionId, transcriptPath, {
     project: basename(cwd), branch: '',
   });
+}
+
+// ---------------------------------------------------- the counts of the sittings already sent
+//
+// A sitting sent before the plugin counted tokens is in past.dev without its counts, and it is never
+// sent again while it does not change. So once, after the update, the plugin sends the counts alone
+// for every sitting already in past.dev whose transcript is still on this machine: ids and numbers,
+// no content. past.dev keeps them for the data points it holds and ignores the others, so nothing
+// is made, moved or charged. It runs in a process of its own, started at a session's start.
+
+const COUNTS_RETRY_MS = 24 * 60 * 60000;
+const COUNTS_BATCH = 500;
+
+function countsDue(state, config) {
+  if (!config.modelUsage || !config.ingest || !config.apiKey) return false;
+  const counts = book(state).counts;
+  if (!counts) return true;
+  return !counts.doneAt && Date.now() - (counts.triedAt || 0) >= COUNTS_RETRY_MS;
+}
+
+async function modeCounts(config) {
+  // One process at a time, and one try a day until it is done.
+  let claimed = false;
+  updateState((fresh) => {
+    if (!countsDue(fresh, config)) return;
+    book(fresh).counts = { triedAt: Date.now() };
+    claimed = true;
+  });
+  if (!claimed) return;
+  const origin = originOf(config, '', process.cwd());
+  // Asked with nothing first: a deployment from before the route existed answers 404, and reading
+  // every transcript for it would be work for nothing.
+  const probe = await api(config, '/api/v1/agent-tokens', { items: [] }, 15000, 'PUT', origin);
+  if (!probe || probe.error) return;
+
+  const { sessions, connections } = book(loadState());
+  const connection = connectionOf(config);
+  let items = [];
+  let sent = 0;
+  const flush = async () => {
+    if (!items.length) return true;
+    const result = await api(config, '/api/v1/agent-tokens', { items }, 30000, 'PUT', origin);
+    if (!result || result.error) return false;
+    sent += items.length;
+    items = [];
+    return true;
+  };
+  for (const found of listTranscripts(true, '')) {
+    const before = sessions[found.sessionId];
+    if (!before) continue;
+    const parsed = withSubagents(readTranscript(found.path), found.path);
+    if (!parsed) continue;
+    // Cut as it was sent: a session sent whole is one data point, the others keep their pinned cut.
+    const whole = !Array.isArray(before.sittings);
+    const pinned = Boolean(before.sittingMinutes);
+    const sittings = whole ? [parsed] : sittingsOf(parsed,
+      pinned ? before.sittingMinutes : config.sittingMinutes,
+      pinned ? (Number(before.sittingKilobytes) || 0) : config.sittingKilobytes,
+      connections[found.sessionId]);
+    const counted = sittingTokens(sittings, parsed.replies);
+    for (const [index, sitting] of sittings.entries()) {
+      // A sitting that was never sent has no data point, and one typed under another connection is
+      // not this connection's to speak of.
+      if (!whole && typeof before.sittings[index] !== 'string') continue;
+      if (!whole && sitting.connection !== undefined && !(connection !== '' && sitting.connection === connection)) continue;
+      const agent = agentOf(counted[index]);
+      if (agent) items.push({ id: sittingId(found.sessionId, index), agent });
+    }
+    if (items.length >= COUNTS_BATCH && !await flush()) return;
+  }
+  if (!await flush()) return;
+  updateState((fresh) => { book(fresh).counts = { doneAt: new Date().toISOString(), sittings: sent }; });
 }
 
 // Claude Code stores each project's transcripts in a directory named after the working
@@ -1463,6 +1742,15 @@ function modeCut(config, argv) {
   else next = `To send it: ${ingest} ${id}`;
   console.error(`\n# ${next}`);
   if (plan.kept.length) console.error(`# ${keptNote}`);
+  // What travels beside the text is said here too: this is where a person reads what leaves.
+  if (config.modelUsage) {
+    const counted = sittingTokens(plan.sittings.map((part) => part.sitting), withSubagents(parsed, target.path).replies);
+    const total = shown.reduce((sum, part) => sum + Object.values(counted[part.index]).reduce((all, counts) => all + tokensIn(counts), 0), 0);
+    const models = [...new Set(shown.reduce((all, part) => all.concat(Object.keys(counted[part.index])), []))];
+    console.error(`# Beside the text: the model${models.length ? ` (${models.join(', ')})` : ''}, its token counts ` +
+      `(${total.toLocaleString()} in all), how it is paid (${billingOf(parsed.cwd)}) and whether ${AGENT}'s own memory is on ` +
+      `(${ownMemoryOf(parsed.cwd)}). "modelUsage": false in ${CONFIG_PATH} sends none of it.`);
+  }
 }
 
 // On-demand recall, for the skill and for a person at a terminal. The hooks cover the automatic
@@ -1472,7 +1760,7 @@ async function modeSearch(config, argv) {
   if (!query) { console.log('Usage: past-hook search <question>'); return; }
   if (!config.apiKey) { console.log(`Not connected. Run ${commandOf('connect')} first.`); return; }
   if (!config.identity) { console.log(`No identity set. Run ${commandOf('connect')} to set one.`); return; }
-  const memories = await recall(config, query, 8, 15000);
+  const memories = await recall(config, query, 8, 15000, originOf(config, folderModel(process.cwd()), process.cwd()));
   if (creditPause(config, 'recall')) { console.log(`Recall paused: insufficient credits. Run ${commandOf('status')} --refresh after you add credits.`); return; }
   if (!memories.length) { console.log('Nothing in past.dev matches that yet.'); return; }
   for (const [index, memory] of memories.entries()) {
@@ -1503,6 +1791,10 @@ async function modeStatus(config, argv) {
       '(sittingMinutes, sittingKilobytes; a session keeps the values it was first sent with)',
     `Sessions   ${sent} sent · ${open.length} open` +
       (unsent ? ` (${unsent} not sent yet)` : ''),
+    `Model use  ${config.modelUsage
+      ? `sent beside each sitting and recall: the model, its token counts, how it is paid (${billingOf(process.cwd())}), ` +
+        `${AGENT}'s own memory (${ownMemoryOf(process.cwd())})`
+      : 'not sent'} ("modelUsage" in the config)`,
   ];
   const watched = (existsSync(ACTIVITY_DIR) ? readdirSync(ACTIVITY_DIR) : [])
     .map((file) => readJson(join(ACTIVITY_DIR, file), null))
@@ -1643,6 +1935,7 @@ try {
   else if (mode === 'stop') await modeStop(config);
   else if (mode === 'idle') await modeIdle(config, argv);
   else if (mode === 'flush') await modeFlush(config, argv);
+  else if (mode === 'counts') await modeCounts(config);
   else if (mode === 'precompact') await modePreCompact(config);
   else if (mode === 'status') await modeStatus(config, argv);
   else if (mode === 'cut') modeCut(config, argv);
