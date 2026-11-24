@@ -38,7 +38,7 @@ const MIN_SITTING_KILOBYTES = 10;
 const COMPACTION_RESEND_MS = 60 * 60000;
 const DEFAULT_API_URL = 'https://api.past.dev';
 const MARKER = '=== past · recalled from memory ===';
-const VERSION = '0.5.0';
+const VERSION = '0.5.1';
 
 // ---------------------------------------------------------------------------------- Claude Code
 
@@ -1489,6 +1489,8 @@ async function modeCounts(config) {
     if (!before) continue;
     const parsed = withSubagents(readTranscript(found.path), found.path);
     if (!parsed) continue;
+    // An ignored folder is ignored here too, for a session sent before the folder was named in deny.
+    if (denied(config, parsed.cwd)) continue;
     // Cut as it was sent: a session sent whole is one data point, the others keep their pinned cut.
     const whole = !Array.isArray(before.sittings);
     const pinned = Boolean(before.sittingMinutes);
